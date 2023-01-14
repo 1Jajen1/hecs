@@ -11,6 +11,8 @@ module Hecs (
 , module Hecs.Filter
 , component, componentWithId
 , getColumn, getColumnWithId
+, EntityId(..)
+, ComponentId(..)
 ) where
 
 import Data.Proxy
@@ -18,6 +20,7 @@ import Data.Proxy
 import Hecs.Monad
 import Hecs.Monad.Class
 
+import Hecs.Entity.Internal
 import Hecs.Component
 import Hecs.World.TH
 import Hecs.World
