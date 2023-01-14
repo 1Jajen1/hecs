@@ -10,8 +10,7 @@ maintainer:          Jannis <overesch.jannis@gmail.com>
 copyright:           2022 Jannis
 category:            Game
 build-type:          Simple
-extra-doc-files:     README.md
-                     CHANGELOG.md
+extra-doc-files:     CHANGELOG.md
 tested-with:         GHC == 9.4.4
 
 common common-options
