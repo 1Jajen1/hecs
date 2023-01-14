@@ -14,9 +14,10 @@ import Control.Monad.Trans.Control
 import Control.Monad.Base
 import Hecs.Filter
 import Data.IORef
+import Control.Monad.Trans.Class
 
 newtype HecsM w m a = HecsM { unHecsM :: ReaderT (IORef w) m a }
-  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadBase b, MonadBaseControl b)  
+  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadTrans, MonadBase b, MonadBaseControl b)  
 
 runHecsM :: MonadIO m => w -> HecsM w m a -> m a
 runHecsM w (HecsM f) = liftIO (newIORef w) >>= runReaderT f 

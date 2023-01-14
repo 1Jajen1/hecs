@@ -17,6 +17,7 @@ common common-options
 -- TODO Go through deps soon-ish
   build-depends:       base ^>= 4.17.0.0
                      , hecs-core
+                     , mtl
                      , transformers
                      , transformers-base
                      , monad-control
