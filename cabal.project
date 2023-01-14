@@ -1,2 +1,1 @@
-packages: ./hecs/hecs.cabal
-packages: ./hecs-core/hecs.cabal
+packages: */*.cabal
