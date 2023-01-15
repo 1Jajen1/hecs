@@ -26,6 +26,8 @@ runHecsM w (HecsM f) = liftIO (newIORef w) >>= runReaderT f
 -- TODO Relax MonadIO to PrimMonad
 
 instance (MonadBaseControl IO m, Core.WorldClass w) => MonadHecs w (HecsM w m) where
+  withEntityAllocator io = HecsM ask >>= liftBase . readIORef >>= \w -> restoreM =<< liftBaseWith (\runInBase -> Core.withEntityAllocator w (runInBase io))
+  {-# INLINE withEntityAllocator #-}
   newEntity = HecsM $ do
     wRef <- ask
     w <- liftBase $ readIORef wRef

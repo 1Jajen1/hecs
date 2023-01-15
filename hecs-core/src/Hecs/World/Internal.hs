@@ -55,6 +55,8 @@ instance KnownNat n => WorldClass (WorldImpl n) where
     pure WorldImpl{..}
     where
       preAllocatedEIds = fromIntegral @_ @Int $ natVal (Proxy @n)
+  withEntityAllocator WorldImpl{freshEId} = EntityId.withEntityAllocator freshEId
+  {-# INLINE withEntityAllocator #-}
   allocateEntity w@WorldImpl{entityIndex, freshEId, emptyArchetype} = do
     (freshEID', eid) <- EntityId.allocateEntityId freshEId
     row <- Archetype.addEntity emptyArchetype eid
@@ -147,6 +149,7 @@ class Component c => Has w c where
 -- All behavior a World has to support. makeWorld creates a newtype around WorldImpl and derives this
 class WorldClass w where
   new :: IO w
+  withEntityAllocator :: w -> IO a -> IO a
   allocateEntity :: w -> IO (w, EntityId)
   deAllocateEntity :: w -> EntityId -> IO w
   setComponentI :: Component c => w -> EntityId -> ComponentId -> c -> IO w

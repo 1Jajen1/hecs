@@ -4,6 +4,7 @@ module Hecs.Entity.Internal (
 , new
 , allocateEntityId
 , deAllocateEntityId
+, withEntityAllocator
 ) where
 
 import Control.Monad
@@ -16,19 +17,21 @@ import Foreign.Storable
 
 import Hecs.HashTable.HashKey
 import Data.Bits
+import Control.Concurrent
 
 new :: IO FreshEntityId
 new = do
   -- Allocate id storage with space for 256 entity ids...
   arr <- newByteArray initSz
   indArr <- newByteArray initSz
-  pure $ FreshEntityId 0 0 arr indArr
+  lock <- newMVar ()
+  pure $ FreshEntityId 0 0 arr indArr lock
   where
     -- 4 bytes per entityid
     initSz = 4 * 256
 
 allocateEntityId :: FreshEntityId -> IO (FreshEntityId, EntityId)
-allocateEntityId (FreshEntityId sz highestId arr indArr) = do
+allocateEntityId (FreshEntityId sz highestId arr indArr lock) = do
   -- Check if we have exhausted all freed ids
   if sz == highestId
     then do
@@ -50,7 +53,7 @@ allocateEntityId (FreshEntityId sz highestId arr indArr) = do
       writeByteArray @Int32 arr' highestId (fromIntegral highestId)
       writeByteArray @Int32 indArr' highestId (fromIntegral highestId)
       -- increment the size and the highest ever id
-      let st = FreshEntityId (sz + 1) (highestId + 1) arr' indArr'
+      let st = FreshEntityId (sz + 1) (highestId + 1) arr' indArr' lock
       -- return the newly generated id
       pure (st, EntityId highestId)
     else do
@@ -59,13 +62,13 @@ allocateEntityId (FreshEntityId sz highestId arr indArr) = do
       --  the deallocate method
       newId <- fromIntegral <$> readByteArray @Int32 arr sz
       -- increment the size
-      let st = FreshEntityId (sz + 1) highestId arr indArr
+      let st = FreshEntityId (sz + 1) highestId arr indArr lock
       -- return the reused id
       pure (st, EntityId newId)
 
 deAllocateEntityId :: FreshEntityId -> EntityId -> IO FreshEntityId
-deAllocateEntityId old@(FreshEntityId sz _ _ _) _ | sz == 0 = pure old
-deAllocateEntityId (FreshEntityId sz highestId arr indArr) (EntityId eid) = do
+deAllocateEntityId old@(FreshEntityId sz _ _ _ _) _ | sz == 0 = pure old
+deAllocateEntityId (FreshEntityId sz highestId arr indArr lock) (EntityId eid) = do
   -- lookup where in the id array the id to deallocate is
   eidInd <- readByteArray @Int32 indArr eid
 
@@ -84,7 +87,10 @@ deAllocateEntityId (FreshEntityId sz highestId arr indArr) (EntityId eid) = do
     writeByteArray @Int32 indArr eid (fromIntegral $ sz - 1)
 
   -- decrement the size
-  pure $ FreshEntityId (sz - 1) highestId arr indArr
+  pure $ FreshEntityId (sz - 1) highestId arr indArr lock
+
+withEntityAllocator :: FreshEntityId -> IO a -> IO a
+withEntityAllocator (FreshEntityId _ _ _ _ lock) io = withMVar lock (const io)
 
 {- Note: Reusing entity ids
 
@@ -108,6 +114,7 @@ data FreshEntityId where
     -> {-# UNPACK #-} !Int -- highest ever allocated id
     -> {-# UNPACK #-} !(MutableByteArray RealWorld) -- array containing all allocated and freed ids
     -> {-# UNPACK #-} !(MutableByteArray RealWorld) -- maps where in the above array an id is
+    -> MVar () -- Lock
     -> FreshEntityId
 
 -- The implementation limits the entity ids to 32 bits, but since we reuse them, that should not be a problem

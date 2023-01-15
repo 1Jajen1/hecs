@@ -9,7 +9,6 @@ import qualified Hecs.Entity.Internal as Core
 import qualified Hecs.Component as Core
 import qualified Hecs.World as Core
 import qualified Hecs.World.Internal (getComponentId)
-import qualified Hecs.Archetype as Core
 import qualified Hecs.Filter as Core
 
 import Data.Proxy
@@ -18,6 +17,7 @@ import Data.Proxy
 -- TODO Consistency between names (hecs <-> hecs-core)
 
 class MonadHecs w m | m -> w where
+  withEntityAllocator :: m a -> m a
   newEntity :: m Core.EntityId
   freeEntity :: Core.EntityId -> m ()
   setComponentWithId :: Core.Component c => Core.EntityId -> Core.ComponentId -> c -> m ()

@@ -7,6 +7,7 @@ module Hecs.World (
 , getComponentWithId
 , setComponent
 , setComponentWithId
+, withEntityAllocator
 , WorldClass
 , WorldImpl
 , filter
