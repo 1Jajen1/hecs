@@ -160,15 +160,15 @@ instance KnownNat n => WorldClass (WorldImpl n) where
     z
   {-# INLINE filterI #-}
   defer w act = act $ w { isDeferred = True }
-  sync w@WorldImpl{deferredOpsRef} = modifyMVar_ deferredOpsRef $ \arr -> go arr 0 >> Arr.new (min 8 $ Arr.size arr `unsafeShiftR` 2) -- TODO Better shrinking?
+  sync w@WorldImpl{deferredOpsRef} = modifyMVar_ deferredOpsRef $ \arr -> traceIO ("Sync " <> show (Arr.size arr) <> " ops") >> go arr 0 >> Arr.new (min 8 $ Arr.size arr `unsafeShiftR` 2) -- TODO Better shrinking?
     where
       go !arr !n
         | n >= Arr.size arr = pure ()
         | otherwise = do
           Arr.read arr n >>= \case
-            CreateEntity e -> syncAllocateEntity w e
-            SetComponent e cId c -> syncSetComponent w e cId c
-            DestroyEntity e -> syncDestroyEntity w e
+            CreateEntity e -> traceIO "Def Create" >> syncAllocateEntity w e
+            SetComponent e cId c -> traceIO "Def Set" >> syncSetComponent w e cId c
+            DestroyEntity e -> traceIO "Def Destroy" >> syncDestroyEntity w e
           go arr (n + 1)
 
 syncAllocateEntity :: WorldImpl n -> EntityId -> IO ()
