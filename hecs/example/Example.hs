@@ -26,9 +26,6 @@ main :: IO ()
 main = do
   w <- newWorld @World
   void . runHecsM w $ do
-    withEntityAllocator $ do
-      eid <- newEntity
-      liftIO $ print eid
     eid <- newEntity
     setComponent @Int eid 10
     getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print

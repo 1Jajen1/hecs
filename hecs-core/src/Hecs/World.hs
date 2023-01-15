@@ -7,7 +7,6 @@ module Hecs.World (
 , getComponentWithId
 , setComponent
 , setComponentWithId
-, withEntityAllocator
 , WorldClass
 , WorldImpl
 , filter
@@ -34,11 +33,11 @@ getComponentWithId :: forall c w r . (WorldClass w, Component c) => w -> EntityI
 getComponentWithId = getComponentI
 {-# INLINE getComponentWithId #-}
 
-setComponent :: forall c w . (WorldClass w, Has w c) => w -> EntityId -> c -> IO w
+setComponent :: forall c w . (WorldClass w, Has w c) => w -> EntityId -> c -> IO ()
 setComponent w eid = setComponentWithId w eid (getComponentId (Proxy @w) (Proxy @c))
 {-# INLINE setComponent #-}
 
-setComponentWithId :: forall c w . (WorldClass w, Component c) => w -> EntityId -> ComponentId c -> c -> IO w
+setComponentWithId :: forall c w . (WorldClass w, Component c) => w -> EntityId -> ComponentId c -> c -> IO ()
 setComponentWithId = setComponentI
 {-# INLINE setComponentWithId #-} -- TODO This is bad
 

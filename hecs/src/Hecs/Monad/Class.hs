@@ -20,7 +20,6 @@ import Data.Proxy
 -- TODO Consistency between names (hecs <-> hecs-core)
 
 class Monad m => MonadHecs w m | m -> w where
-  withEntityAllocator :: m a -> m a
   newEntity :: m Core.EntityId
   freeEntity :: Core.EntityId -> m ()
   setComponentWithId :: Core.Component c => Core.EntityId -> Core.ComponentId c -> c -> m ()

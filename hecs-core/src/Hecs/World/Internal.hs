@@ -26,16 +26,40 @@ import GHC.IO
 import Foreign.Storable (sizeOf)
 import Debug.Trace
 import GHC.Exts (Any)
+import Data.IORef
 
 -- This is going to be wrapped by 'makeWorld "World" [''Comp1, ''Comp2, ...]' which enables
 -- making some component ids static. The componentMap is then only used for unknown/dynamic components
 data WorldImpl (preAllocatedEIds :: Nat) = WorldImpl {
-  freshEId         :: !EntityId.FreshEntityId -- allocate unique entity ids with reuse
-, entityIndex      :: !(IntMap ArchetypeRecord) -- changes often and thus needs good allround performance
-, componentIndex   :: !(HTB.HashTable (ComponentId Any) (Arr.Array ArchetypeRecord)) -- changes infrequently if ever after the component graph stabilises, so only read perf matters, but also not too much
-, archetypeIndex   :: !(HTB.HashTable ArchetypeTy Archetype) -- changes infrequently once graph stabilises
-, emptyArchetype   :: !Archetype
+  freshEIdRef       :: !(IORef EntityId.FreshEntityId) -- allocate unique entity ids with reuse
+, entityIndexRef    :: !(IORef (IntMap ArchetypeRecord)) -- changes often and thus needs good allround performance
+, componentIndexRef :: !(IORef (HTB.HashTable (ComponentId Any) (Arr.Array ArchetypeRecord))) -- changes infrequently if ever after the component graph stabilises, so only read perf matters, but also not too much
+, archetypeIndexRef :: !(IORef (HTB.HashTable ArchetypeTy Archetype)) -- changes infrequently once graph stabilises
+, emptyArchetype    :: !Archetype
 }
+
+-- deferring updates:
+-- Defer any component change: Entity Ids have a lock to allocate (Although I probably could defer them as well if I wanted to)
+-- 
+{-
+  Common scenario for me:
+    - a network thread allocates a new entity id for a new client
+      - the network thread sets a bunch of components for this client, moving between a few tables
+      - [Out] Client
+    
+    - the main thread iterates clients
+      - we move clients to the Joined table with setting a tag
+      - This has an [In] Client and [Out] Joined access pattern
+    
+    - we iterate a (changed) joined table
+      -- This has [In] Client [In] Joined access pattern, so we have a data dependency from this system to the previous one
+
+-- Defer everything in network threads by default
+-- The main thread then commits at the start of a tick
+-- Now we can utilise access patterns for concurrency or defer everything?
+
+-}
+
 
 data ArchetypeRecord = ArchetypeRecord !Int !Archetype
 
@@ -53,31 +77,42 @@ instance KnownNat n => WorldClass (WorldImpl n) where
 
     archetypeIndex <- HTB.insert archetypeIndex' (Archetype.getTy emptyArchetype) emptyArchetype
 
+    freshEIdRef <- newIORef freshEId
+    entityIndexRef <- newIORef entityIndex
+    componentIndexRef <- newIORef componentIndex
+    archetypeIndexRef <- newIORef archetypeIndex
+
     pure WorldImpl{..}
     where
       preAllocatedEIds = fromIntegral @_ @Int $ natVal (Proxy @n)
-  withEntityAllocator WorldImpl{freshEId} = EntityId.withEntityAllocator freshEId
-  {-# INLINE withEntityAllocator #-}
-  allocateEntity w@WorldImpl{entityIndex, freshEId, emptyArchetype} = do
-    (freshEID', eid) <- EntityId.allocateEntityId freshEId
+  allocateEntity WorldImpl{entityIndexRef, freshEIdRef, emptyArchetype} = do
+    
+    (!freshEID', eid) <- readIORef freshEIdRef >>= EntityId.allocateEntityId
+
+    writeIORef freshEIdRef freshEID'
+
     row <- Archetype.addEntity emptyArchetype eid
-    let eindex = IM.insert (coerce eid) (ArchetypeRecord row emptyArchetype) entityIndex
-    pure (w { freshEId = freshEID', entityIndex = eindex }, eid)
+    
+    modifyIORef' entityIndexRef $ IM.insert (coerce eid) (ArchetypeRecord row emptyArchetype)
+
+    pure eid
   {-# INLINE allocateEntity #-}
-  deAllocateEntity w@WorldImpl{freshEId} eid = do
-    freshEID' <- EntityId.deAllocateEntityId freshEId eid
+  deAllocateEntity WorldImpl{freshEIdRef} eid = do
+    !freshEID' <- readIORef freshEIdRef >>= flip EntityId.deAllocateEntityId eid
+    writeIORef freshEIdRef freshEID'
     -- TODO Actually remove the entity everywhere
-    pure (w { freshEId = freshEID' })
+    pure ()
   {-# INLINE deAllocateEntity #-}
 
-  setComponentI :: forall c . Component c => WorldImpl n -> EntityId -> ComponentId c -> c -> IO (WorldImpl n)
-  setComponentI w@WorldImpl{entityIndex,archetypeIndex,componentIndex} eid compId comp = do
-    let ArchetypeRecord row aty = IM.findWithDefault (error "Hecs.World.Internal:setComponentI entity id not in entity index!") (coerce eid) entityIndex
+  setComponentI :: forall c . Component c => WorldImpl n -> EntityId -> ComponentId c -> c -> IO ()
+  setComponentI WorldImpl{entityIndexRef,archetypeIndexRef,componentIndexRef} eid compId comp = do
+    eIndex <- readIORef entityIndexRef
+    let ArchetypeRecord row aty = IM.findWithDefault (error "Hecs.World.Internal:setComponentI entity id not in entity index!") (coerce eid) eIndex
     -- Check if we have that component, if yes, write it, if no, move the entity
     Archetype.lookupComponent (Proxy @c) aty compId
       (\c -> do
         -- putStrLn "Write only"
-        Archetype.writeComponent aty row c comp >> pure w)
+        Archetype.writeComponent aty row c comp)
       $ Archetype.getEdge aty compId >>= \case
         -- We have an edge! Move the entity and write the component there
         ArchetypeEdge (Just dstAty) _ -> Archetype.lookupComponent (Proxy @c) dstAty compId
@@ -88,15 +123,17 @@ instance KnownNat n => WorldClass (WorldImpl n) where
             Archetype.writeComponent dstAty newRow c comp
 
             -- Important insert the moved first in case it is ourselves so that we overwrite it after
-            pure (w { entityIndex = IM.insert (coerce eid) (ArchetypeRecord newRow dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row aty) entityIndex }))
+            writeIORef entityIndexRef $! IM.insert (coerce eid) (ArchetypeRecord newRow dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row aty) eIndex)
           (error "Hecs.World.Internal:setComponentI edge destination did not have component")
         -- We don't have an edge, but the archetype may exist, so check the archetype index first
         ArchetypeEdge Nothing _ -> do -- remove edge should be empty!
           (newTy, newColumn) <- Archetype.addComponentType (Proxy @c) (Archetype.getTy aty) compId
-          (w', dstAty) <- HTB.lookup archetypeIndex newTy (\dstAty -> do
+
+          archetypeIndex <- readIORef archetypeIndexRef
+          dstAty <- HTB.lookup archetypeIndex newTy (\dstAty -> do
               -- putStrLn "Cheap move (no edge)" 
               Archetype.setEdge aty compId (ArchetypeEdge (Just dstAty) Nothing)
-              pure (w, dstAty)
+              pure dstAty
             ) $ do
               -- putStrLn "Expensive move" 
               dstAty <- backing (Proxy @c)
@@ -107,14 +144,17 @@ instance KnownNat n => WorldClass (WorldImpl n) where
                 (Archetype.createArchetype newTy (getColumnSizes aty))
                 
               Archetype.setEdge aty compId (ArchetypeEdge (Just dstAty) Nothing)
-              newArchetypeIndex <- HTB.insert archetypeIndex newTy dstAty
+              !newArchetypeIndex <- HTB.insert archetypeIndex newTy dstAty
+              writeIORef archetypeIndexRef newArchetypeIndex
 
-              compIndex <- Archetype.iterateComponentIds newTy (\tyId ind -> do 
+              componentIndex <- readIORef componentIndexRef
+              !compIndex <- Archetype.iterateComponentIds newTy (\tyId ind -> do 
                 arr <- HTB.lookup ind (coerce tyId) (`Arr.writeBack` ArchetypeRecord newColumn dstAty) $ Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord newColumn dstAty)
                 HTB.insert ind (coerce tyId) arr) (pure componentIndex)
+              writeIORef componentIndexRef compIndex
 
               -- TODO I cannot use w { ... } here because of componentIndex
-              pure (WorldImpl { archetypeIndex = newArchetypeIndex, componentIndex = compIndex, freshEId = freshEId w, emptyArchetype = emptyArchetype w, entityIndex = entityIndex }, dstAty)
+              pure dstAty
 
           -- now move the entity and its current data between the two
           (newRow, movedEid) <- Archetype.moveEntity aty row newColumn dstAty
@@ -123,15 +163,15 @@ instance KnownNat n => WorldClass (WorldImpl n) where
           Archetype.writeComponent dstAty newRow newColumn comp
 
           -- Important insert the moved first in case it is ourselves so that we overwrite it after
-          pure $ w' { entityIndex = IM.insert (coerce eid) (ArchetypeRecord newRow dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row aty) entityIndex }
+          writeIORef entityIndexRef $! IM.insert (coerce eid) (ArchetypeRecord newRow dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row aty) eIndex
   {-# INLINE setComponentI #-} -- TODO I'd like INLINEABLE more but looks like specialize won't work ...
   getComponentI :: forall c r . Component c => WorldImpl n -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
-  getComponentI WorldImpl{entityIndex} eid compId s f = do
-    let ArchetypeRecord row aty = IM.findWithDefault (error "Hecs.World.Internal:getComponentI entity id not in entity index!") (coerce eid) entityIndex
+  getComponentI WorldImpl{entityIndexRef} eid compId s f = do
+    ArchetypeRecord row aty <- IM.findWithDefault (error "Hecs.World.Internal:getComponentI entity id not in entity index!") (coerce eid) <$> readIORef entityIndexRef
     Archetype.lookupComponent (Proxy @c) aty compId (Archetype.readComponent aty row >=> s) f
   {-# INLINE getComponentI #-}
   -- TODO Check if ghc removes the filter entirely
-  filterI WorldImpl{componentIndex} fi f z = HTB.lookup componentIndex (Filter.extractMainId fi)
+  filterI WorldImpl{componentIndexRef} fi f z = readIORef componentIndexRef >>= \componentIndex -> HTB.lookup componentIndex (Filter.extractMainId fi)
     (\arr ->
       let sz = Arr.size arr
           go !n !b
@@ -153,10 +193,9 @@ class Component c => Has w c where
 -- All behavior a World has to support. makeWorld creates a newtype around WorldImpl and derives this
 class WorldClass w where
   new :: IO w
-  withEntityAllocator :: w -> IO a -> IO a
-  allocateEntity :: w -> IO (w, EntityId)
-  deAllocateEntity :: w -> EntityId -> IO w
-  setComponentI :: Component c => w -> EntityId -> ComponentId c -> c -> IO w
+  allocateEntity :: w -> IO EntityId
+  deAllocateEntity :: w -> EntityId -> IO ()
+  setComponentI :: Component c => w -> EntityId -> ComponentId c -> c -> IO ()
   getComponentI :: Component c => w -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
   filterI :: w -> Filter ty Filter.HasMainId -> (Filter.TypedArchetype ty -> b -> IO b) -> IO b -> IO b
 

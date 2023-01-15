@@ -14,58 +14,38 @@ import Control.Monad.IO.Class
 import Control.Monad.Trans.Control
 import Control.Monad.Base
 import Hecs.Filter
-import Data.IORef
 import Control.Monad.Trans.Class
 
-newtype HecsM w m a = HecsM { unHecsM :: ReaderT (IORef w) m a }
+newtype HecsM w m a = HecsM { unHecsM :: ReaderT w m a }
   deriving newtype (Functor, Applicative, Monad, MonadIO, MonadTrans, MonadBase b, MonadBaseControl b)  
 
-runHecsM :: MonadIO m => w -> HecsM w m a -> m a
-runHecsM w (HecsM f) = liftIO (newIORef w) >>= runReaderT f 
+runHecsM ::  w -> HecsM w m a -> m a
+runHecsM w (HecsM f) = runReaderT f w
 {-# INLINE runHecsM #-}
 
-getWorld :: MonadIO m => HecsM w m w
-getWorld = HecsM $ ask >>= liftIO . readIORef
+getWorld :: Monad m => HecsM w m w
+getWorld = HecsM ask
 {-# INLINE getWorld #-}
 
 -- TODO Relax MonadIO to PrimMonad?
 
 instance (MonadBaseControl IO m, Core.WorldClass w) => MonadHecs w (HecsM w m) where
-  withEntityAllocator io = HecsM ask >>= liftBase . readIORef >>= \w -> restoreM =<< liftBaseWith (\runInBase -> Core.withEntityAllocator w (runInBase io))
-  {-# INLINE withEntityAllocator #-}
-  newEntity = HecsM $ do
-    wRef <- ask
-    w <- liftBase $ readIORef wRef
-    (w', eid) <- liftBase $ Core.allocateEntity w
-    liftBase $ writeIORef wRef w'
-    pure eid
+  newEntity = HecsM $ ask >>= liftBase . Core.allocateEntity
   {-# INLINE newEntity #-}
-  freeEntity eid = HecsM $ do
-    wRef <- ask
-    w <- liftBase $ readIORef wRef 
-    w' <- liftBase $ Core.deAllocateEntity w eid
-    liftBase $ writeIORef wRef w'
+  freeEntity eid = HecsM $ ask >>= liftBase . flip Core.deAllocateEntity eid
   {-# INLINE freeEntity #-}
-  setComponentWithId eid compId comp = HecsM $ do
-    wRef <- ask
-    w <- liftBase $ readIORef wRef
-    w' <- liftBase $ Core.setComponentWithId w eid compId comp
-    liftBase $ writeIORef wRef w'
+  setComponentWithId eid compId comp = HecsM $ ask >>= \w -> liftBase $ Core.setComponentWithId w eid compId comp
   {-# INLINE setComponentWithId #-}
-  getComponentWithId eid compId s f = HecsM $ do
-    w <- ask >>= liftBase . readIORef
-    mC <- liftBase $ Core.getComponentWithId w eid compId (pure . Just) (pure Nothing)
-    case mC of
-      Nothing -> unHecsM f
-      Just c -> unHecsM $ s c
+  getComponentWithId eid compId s (HecsM f) = HecsM $ ask >>= \w -> do
+    st <- liftBaseWith $ \runInBase -> Core.getComponentWithId w eid compId
+      (runInBase . unHecsM . s)
+      (runInBase f)
+    restoreM st
   {-# INLINE getComponentWithId #-}
-  hasTagWithId eid compId = HecsM $ do
-    w <- ask >>= liftBase . readIORef
-    liftBase $ Core.getComponentWithId w eid compId (const $ pure True) (pure False)
+  hasTagWithId eid compId = HecsM $ ask >>= \w -> liftBase $ Core.getComponentWithId w eid compId (const $ pure True) (pure False)
   filter :: forall b ty . Filter ty HasMainId -> (TypedArchetype ty -> b -> HecsM w m b) -> HecsM w m b -> HecsM w m b
-  filter fi f z = HecsM ask >>= \wRef -> do
+  filter fi f z = HecsM ask >>= \w -> do
     st <- liftBaseWith $ \runInBase -> do
-      w <- readIORef wRef
       Core.filter @_ @_ @(StM m b) w fi
         (\aty acc -> runInBase $ restoreM acc >>= f aty)
         (runInBase z)
