@@ -17,7 +17,11 @@ data Position = Pos {-# UNPACK #-} !Int {-# UNPACK #-} !Float {-# UNPACK #-} !In
   deriving stock (Show, Generic)
   deriving (Storable, Component) via (GenericFlat Position)
 
-makeWorld "World" [''Int, ''Int8, ''Position]
+data Test
+  deriving stock Generic
+  deriving Component via (GenericFlat Test)
+
+makeWorld "World" [''Int, ''Int8, ''Position, ''Test]
 
 main :: IO ()
 main = do

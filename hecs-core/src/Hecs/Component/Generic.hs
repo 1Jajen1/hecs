@@ -41,6 +41,10 @@ instance (Generic a, GSizeOf (Rep a), GAlignment (Rep a), GPoke (Rep a), GPeek (
 class GSizeOf (f :: Type -> Type) where
   gSizeOf :: f x -> Int
 
+instance GSizeOf V1 where
+  gSizeOf _ = 0
+  {-# INLINE gSizeOf #-}
+
 instance GSizeOf f => GSizeOf (M1 i m f) where
   gSizeOf _ = gSizeOf (undefined @_ @(f _))
   {-# INLINE gSizeOf #-}
@@ -60,6 +64,10 @@ instance Storable a => GSizeOf (K1 i a) where
 class GAlignment (f :: Type -> Type) where
   gAlignment :: f x -> Int
 
+instance GAlignment V1 where
+  gAlignment _ = 0
+  {-# INLINE gAlignment #-}
+
 instance GAlignment f => GAlignment (M1 i m f) where
   gAlignment _ = gAlignment (undefined @_ @(f _))
   {-# INLINE gAlignment #-}
@@ -74,6 +82,10 @@ instance Storable a => GAlignment (K1 i a) where
 
 class GPoke (f :: Type -> Type)  where
   gPoke :: Int -> Ptr () -> f x -> IO Int
+
+instance GPoke V1 where
+  gPoke _ _ _ = pure 0
+  {-# INLINE gPoke #-}
 
 instance GPoke f => GPoke (M1 i m f) where
   gPoke w ptr (M1 f) = gPoke w ptr f
@@ -95,6 +107,10 @@ instance Storable a => GPoke (K1 m a) where
 
 class GPeek (f :: Type -> Type) where
   gPeek :: Int -> Ptr () -> IO (Int, f x)
+
+instance GPeek V1 where
+  gPeek _ _ = error "gPeek on V1 instance"
+  {-# INLINE gPeek #-}
 
 instance GPeek f => GPeek (M1 i m f) where
   gPeek w = fmap (fmap M1) . gPeek w
