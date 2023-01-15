@@ -16,7 +16,7 @@ import Data.Proxy
 -- TODO Get rid of internal imports, use higher level ones only to avoid relying on hecs-core internals here
 -- TODO Consistency between names (hecs <-> hecs-core)
 
-class MonadHecs w m | m -> w where
+class Monad m => MonadHecs w m | m -> w where
   withEntityAllocator :: m a -> m a
   newEntity :: m Core.EntityId
   freeEntity :: Core.EntityId -> m ()

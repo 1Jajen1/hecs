@@ -36,11 +36,11 @@ getComponentWithId = getComponentI
 
 setComponent :: forall c w . (WorldClass w, Has w c) => w -> EntityId -> c -> IO w
 setComponent w eid = setComponentWithId w eid (getComponentId (Proxy @w) (Proxy @c))
-{-# INLINEABLE setComponent #-}
+{-# INLINE setComponent #-}
 
 setComponentWithId :: forall c w . (WorldClass w, Component c) => w -> EntityId -> ComponentId -> c -> IO w
 setComponentWithId = setComponentI
-{-# INLINEABLE setComponentWithId #-}
+{-# INLINE setComponentWithId #-} -- TODO This is bad
 
 filter :: WorldClass w => w -> Filter ty HasMainId -> (TypedArchetype ty -> b -> IO b) -> IO b -> IO b
 filter = filterI

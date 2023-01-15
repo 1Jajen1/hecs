@@ -120,7 +120,7 @@ instance KnownNat n => WorldClass (WorldImpl n) where
 
           -- Important insert the moved first in case it is ourselves so that we overwrite it after
           pure $ w' { entityIndex = IM.insert (coerce eid) (ArchetypeRecord newRow dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row aty) entityIndex }
-  {-# INLINABLE setComponentI #-}
+  {-# INLINE setComponentI #-} -- TODO I'd like INLINEABLE more but looks like specialize won't work ...
   getComponentI :: forall c r . Component c => WorldImpl n -> EntityId -> ComponentId -> (c -> IO r) -> IO r -> IO r
   getComponentI WorldImpl{entityIndex} eid compId s f = do
     let ArchetypeRecord row aty = IM.findWithDefault (error "Hecs.World.Internal:getComponentI entity id not in entity index!") (coerce eid) entityIndex
