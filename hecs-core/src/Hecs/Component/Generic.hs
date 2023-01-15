@@ -11,7 +11,6 @@ import Data.Kind
 import Foreign.Ptr
 import Data.Coerce
 import Control.Monad
-import Data.Proxy
 
 -- TODO Benchmark, look here for how to:
 -- https://hackage.haskell.org/package/derive-storable-plugin

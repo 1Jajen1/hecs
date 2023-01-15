@@ -35,6 +35,7 @@ main = do
     getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
     e2 <- newEntity
     setTag @Test e2
+    setComponent e2 (Rel @Test @Int 10)
     liftIO $ putStrLn "Set tag!"
     setComponent @Int e2 100
     setComponent @Position e2 (Pos 10 20 0)

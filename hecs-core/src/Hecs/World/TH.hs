@@ -10,7 +10,7 @@ import Hecs.World.Internal
 import Hecs.Component.Internal
 import Hecs.Entity.Internal
 
-import Data.Coerce
+import Hecs.Component
 
 makeWorld :: String -> [Name] -> Q [Dec]
 makeWorld wN names = do
@@ -30,6 +30,10 @@ makeWorld wN names = do
   compInstances <- foldr (\(i, n) acc -> acc >>= \xs -> mkHasInstance i n >>= \ys -> pure $ ys ++ xs) (pure []) $ zip [1..] names
   otherInstances <- [d|
       deriving newtype instance WorldClass $wCon
+
+      instance (Has $wCon l, Has $wCon r) => Has $wCon (Rel l r) where
+        getComponentId _ _ = mkRelation (getComponentId (Proxy @($wCon)) (Proxy @l)) (getComponentId (Proxy @($wCon)) (Proxy @r))
+        {-# INLINE getComponentId #-}
     |]
   pure $ wldDec : compInstances ++ otherInstances
   where

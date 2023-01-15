@@ -55,5 +55,6 @@ library
                       , Hecs.Component
                       , Hecs.Component.Generic
                       , Hecs.Component.Internal
+                      , Hecs.Component.Relation
                       , Hecs.Filter
                       , Hecs.Filter.Internal

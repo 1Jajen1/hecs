@@ -133,7 +133,7 @@ addComponent (ComponentType# arr) (ComponentId (EntityId (I# i))) s0 =
   case newByteArray# (bSz +# 8#) s0 of
     (# s1, mar #) -> case go mar 0# s1 of
       (# s2, ind #) -> case writeIntArray# mar ind i s2 of
-        s3 -> case copyByteArray# arr (ind *# 8#) mar (ind +# 8#) (bSz -# ind *# 8#) s3 of -- TODO Double check bounds
+        s3 -> case copyByteArray# arr (ind *# 8#) mar (8# *# (ind  +# 1#)) (bSz -# ind *# 8#) s3 of -- TODO Double check bounds
           s4 -> case unsafeFreezeByteArray# mar s4 of
             (# s5, newArr #) -> (# s5, ComponentType# newArr, ind #)
   where

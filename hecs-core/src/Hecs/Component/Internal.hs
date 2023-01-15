@@ -41,7 +41,7 @@ type ReadTagMsg = "Cannot read a tag"
 
 type family IsTag a err :: Constraint where
   IsTag TagBackend _ = ()
-  IsTag a err = TypeError ('Text err :$$: ('Text "Cannot match " :<>: ShowType a :<>: 'Text " with expected " :<>: ShowType TagBackend))
+  IsTag a err = TypeError ('Text err :$$: ('Text "Cannot match " :<>: ShowType a :<>: 'Text " with expected TagBackend"))
 
 -- TODO Can we reasonably make a default instance?
 class Coercible a (Store a) => Component a where
