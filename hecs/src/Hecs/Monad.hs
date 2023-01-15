@@ -3,6 +3,7 @@
 module Hecs.Monad (
   HecsM(..)
 , runHecsM
+, getWorld
 ) where
 
 import Hecs.Monad.Class
@@ -23,7 +24,11 @@ runHecsM :: MonadIO m => w -> HecsM w m a -> m a
 runHecsM w (HecsM f) = liftIO (newIORef w) >>= runReaderT f 
 {-# INLINE runHecsM #-}
 
--- TODO Relax MonadIO to PrimMonad
+getWorld :: MonadIO m => HecsM w m w
+getWorld = HecsM $ ask >>= liftIO . readIORef
+{-# INLINE getWorld #-}
+
+-- TODO Relax MonadIO to PrimMonad?
 
 instance (MonadBaseControl IO m, Core.WorldClass w) => MonadHecs w (HecsM w m) where
   withEntityAllocator io = HecsM ask >>= liftBase . readIORef >>= \w -> restoreM =<< liftBaseWith (\runInBase -> Core.withEntityAllocator w (runInBase io))
