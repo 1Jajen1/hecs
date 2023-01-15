@@ -27,6 +27,8 @@ import Data.Kind
 import GHC.TypeLits
 import Data.Type.Bool hiding (Not)
 import qualified Data.Type.Bool
+import GHC.Exts (Any)
+import Data.Coerce
 
 data FilterContext = HasMainId | DoesNotHaveMainId
 
@@ -38,8 +40,8 @@ type family InvertCtx (ctx :: FilterContext) :: FilterContext where
   InvertCtx HasMainId = DoesNotHaveMainId
   InvertCtx DoesNotHaveMainId = HasMainId
 
-extractMainId :: Filter tyF HasMainId -> ComponentId
-extractMainId (WithMain i  _) = i
+extractMainId :: Filter tyF HasMainId -> ComponentId Any
+extractMainId (WithMain i  _) = coerce i
 {-# INLINE extractMainId #-}
 
 evaluate :: Filter tyF ctx -> Archetype -> Bool
@@ -49,8 +51,8 @@ evaluate (NotFilter _ f) = f
 
 -- TODO Check if this always fuses cleanly
 data Filter tyF (ctx :: FilterContext) where
-  WithMain :: !ComponentId -> (Archetype -> Bool) -> Filter tyF HasMainId
-  NotFilter :: !ComponentId -> (Archetype -> Bool) -> Filter tyF DoesNotHaveMainId
+  WithMain :: !(ComponentId Any) -> (Archetype -> Bool) -> Filter tyF HasMainId
+  NotFilter :: !(ComponentId Any) -> (Archetype -> Bool) -> Filter tyF DoesNotHaveMainId
 
 data And l r
 
@@ -80,13 +82,13 @@ not (NotFilter m f) = WithMain m $ Prelude.not . f
 -- TODO 
 -- This has a small inefficiency: The main component id is guaranteed to be there, so no point in rechecking
 -- but since we don't know who or what the main id is, we have no choice here
-componentWithId :: Component c => Proxy c -> ComponentId -> Filter c HasMainId
-componentWithId p compId = WithMain compId $ \aty -> lookupComponent p aty compId (const True) False
+componentWithId :: Component c => Proxy c -> ComponentId c -> Filter c HasMainId
+componentWithId p compId = WithMain (coerce compId) $ \aty -> lookupComponent p aty compId (const True) False
 {-# INLINE componentWithId #-}
 
 newtype TypedArchetype ty = TypedArchetype Archetype
 
-getColumnWithId :: (Component c, TypedHas ty c) => Proxy c -> TypedArchetype ty -> ComponentId -> IO (Backend c)
+getColumnWithId :: (Component c, TypedHas ty c) => Proxy c -> TypedArchetype ty -> ComponentId c -> IO (Backend c)
 getColumnWithId p (TypedArchetype aty) compId = lookupComponent p aty compId
   (\col -> getColumn p aty col)
   (error "Hecs.Filter.Internal:getColumn Component that was on the type level wasn't on the value level")

@@ -1,8 +1,11 @@
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 module Hecs.Monad.Class (
   MonadHecs(..)
 , setComponent
 , getComponent
+, setTag, setTagWithId
+, hasTag
 ) where
 
 import qualified Hecs.Entity.Internal as Core
@@ -20,14 +23,27 @@ class Monad m => MonadHecs w m | m -> w where
   withEntityAllocator :: m a -> m a
   newEntity :: m Core.EntityId
   freeEntity :: Core.EntityId -> m ()
-  setComponentWithId :: Core.Component c => Core.EntityId -> Core.ComponentId -> c -> m ()
-  getComponentWithId :: Core.Component c => Core.EntityId -> Core.ComponentId -> (c -> m r) -> m r -> m r
+  setComponentWithId :: Core.Component c => Core.EntityId -> Core.ComponentId c -> c -> m ()
+  getComponentWithId :: (Core.NoTagBackend (Core.Backend c) Core.ReadTagMsg, Core.Component c) => Core.EntityId -> Core.ComponentId c -> (c -> m r) -> m r -> m r
+  hasTagWithId :: (Core.IsTag (Core.Backend c) "hasTag only allowed for tag components", Core.Component c) => Core.EntityId -> Core.ComponentId c -> m Bool
   filter :: Core.Filter ty Core.HasMainId -> (Core.TypedArchetype ty -> b -> m b) -> m b -> m b
 
 setComponent :: forall c w m . (MonadHecs w m, Core.Has w c) => Core.EntityId -> c -> m ()
 setComponent eid = setComponentWithId eid (Hecs.World.Internal.getComponentId (Proxy @w) (Proxy @c))
 {-# INLINE setComponent #-}
 
-getComponent :: forall c w m r . (MonadHecs w m, Core.Has w c) => Core.EntityId -> (c -> m r) -> m r -> m r
+getComponent :: forall c w m r . (Core.NoTagBackend (Core.Backend c) Core.ReadTagMsg, MonadHecs w m, Core.Has w c) => Core.EntityId -> (c -> m r) -> m r -> m r
 getComponent eid = getComponentWithId eid (Hecs.World.Internal.getComponentId (Proxy @w) (Proxy @c))
 {-# INLINE getComponent #-}
+
+setTag :: forall c w m . (Core.IsTag (Core.Backend c) "setTag only allows tag components", MonadHecs w m, Core.Has w c) => Core.EntityId -> m ()
+setTag eid = setComponentWithId @_ @_ @c eid (Hecs.World.Internal.getComponentId (Proxy @w) (Proxy @c)) (error "Hecs.Monad.Class:setTag evaluated tag placeholder!")
+{-# INLINE setTag #-}
+
+setTagWithId :: forall c w m . (Core.IsTag (Core.Backend c) "setTagWithId only allows tag components", MonadHecs w m, Core.Component c) => Core.EntityId -> Core.ComponentId c -> m ()
+setTagWithId eid tagId = setComponentWithId @_ @_ @c eid tagId (error "Hecs.Monad.Class:setTagWithId evaluated tag placeholder!")
+{-# INLINE setTagWithId #-}
+
+hasTag :: forall c w m . (Core.IsTag (Core.Backend c) "hasTag only allowed for tag components", MonadHecs w m, Core.Has w c) => Core.EntityId -> m Bool
+hasTag eid = hasTagWithId @w @m @c eid (Hecs.World.Internal.getComponentId (Proxy @w) (Proxy @c))
+{-# INLINE hasTag #-}

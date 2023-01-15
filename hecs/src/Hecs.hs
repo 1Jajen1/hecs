@@ -32,11 +32,11 @@ import Control.Monad.Base
 component :: forall w c . Has w c => Filter c HasMainId
 component = Hecs.Filter.component (Proxy @w) (Proxy @c)
 
-componentWithId :: forall c . Component c => ComponentId -> Filter c HasMainId
+componentWithId :: forall c . Component c => ComponentId c -> Filter c HasMainId
 componentWithId = Hecs.Filter.componentWithId (Proxy @c)
 
 getColumn :: forall w c ty m . (Has w c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> m (Backend c)
 getColumn aty = getColumnWithId @c @ty aty (getComponentId (Proxy @w) (Proxy @c))
 
-getColumnWithId :: forall c ty m . (Component c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> ComponentId -> m (Backend c)
+getColumnWithId :: forall c ty m . (Component c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> ComponentId c -> m (Backend c)
 getColumnWithId aty c = liftBase $ Hecs.Filter.getColumnWithId (Proxy @c) aty c

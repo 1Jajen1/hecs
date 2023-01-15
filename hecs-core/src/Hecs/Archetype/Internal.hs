@@ -38,34 +38,36 @@ import Foreign.Storable
 import Unsafe.Coerce (unsafeCoerce)
 import Data.Proxy
 import Data.IORef
+import Debug.Trace
 
 -- TODO This whole file needs a rework once done
+-- TODO Add a custom allocator for the pinned aligned column arrays. This is to combat fragmentation
 
 data ArchetypeEdge = ArchetypeEdge !(Maybe Archetype) !(Maybe Archetype)
 
 -- TODO Make sum type for tags and other non-storage affecting data? I could also just share the column structure as it is entirely mutable
 data Archetype = Archetype {
-  edges        :: {-# UNPACK #-} !(IORef (HTB.HashTable ComponentId ArchetypeEdge))
+  edges        :: {-# UNPACK #-} !(IORef (HTB.HashTable (ComponentId Any) ArchetypeEdge))
 , columns      :: {-# UNPACK #-} Columns#
 , componentTyB :: ComponentType#
 , componentTyF :: ComponentType#
--- , componentTyT -- tags, not stored in columns but should still exist
+, componentTyT :: ComponentType#
 }
 
 getTy :: Archetype -> ArchetypeTy
-getTy Archetype{componentTyB, componentTyF} = ArchetypeTy componentTyB componentTyF 
+getTy Archetype{componentTyB, componentTyF, componentTyT} = ArchetypeTy componentTyB componentTyF componentTyT 
 
 getNumEntities :: Archetype -> IO Int
 getNumEntities (Archetype{columns = Columns# szRef _ _ _ _}) = IO $ \s -> case readIntArray# szRef 0# s of (# s1, i #) -> (# s1, I# i #) 
 
 -- This is a monoid?
-data ArchetypeTy = ArchetypeTy ComponentType# ComponentType#
+data ArchetypeTy = ArchetypeTy ComponentType# ComponentType# ComponentType#
 
-iterateComponentIds :: ArchetypeTy -> (ComponentId -> b -> IO b) -> IO b -> IO b
-iterateComponentIds (ArchetypeTy tyB tyF) f z = iterateTy tyB f z >>= \b -> iterateTy tyF f (pure b)
+iterateComponentIds :: ArchetypeTy -> (forall a . ComponentId a -> b -> IO b) -> IO b -> IO b
+iterateComponentIds (ArchetypeTy tyB tyF tyT) f z = iterateTy tyB f z >>= \b -> iterateTy tyF f (pure b) >>= \b1 -> iterateTy tyT f (pure b1)
 {-# INLINE iterateComponentIds #-}
 
-iterateTy :: ComponentType# -> (ComponentId -> b -> IO b) -> IO b -> IO b
+iterateTy :: ComponentType# -> (ComponentId Any -> b -> IO b) -> IO b -> IO b
 iterateTy (ComponentType# arr) f z = z >>= go 0# 
   where
     sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
@@ -75,7 +77,7 @@ iterateTy (ComponentType# arr) f z = z >>= go 0#
 {-# INLINE iterateTy #-}
 
 instance Show ArchetypeTy where
-  show (ArchetypeTy b u) = "ArchetypeTy { boxed = " <> showTy b <> " unboxed = " <> showTy u <> " }"
+  show (ArchetypeTy b u t) = "ArchetypeTy { boxed = " <> showTy b <> " unboxed = " <> showTy u <> " tag = " <> showTy t <> " }"
 
 showTy :: ComponentType# -> String
 showTy (ComponentType# arr) = "[" <> dropLast (go 0# "") <> "]"
@@ -88,21 +90,23 @@ showTy (ComponentType# arr) = "[" <> dropLast (go 0# "") <> "]"
            | otherwise = show (I# (indexIntArray# arr n)) <> "," <> go (n +# 1#) b
 
 instance Eq ArchetypeTy where
-  ArchetypeTy lB lU == ArchetypeTy rB rU = eqComponentType lB rB && eqComponentType lU rU
+  ArchetypeTy lB lU lT == ArchetypeTy rB rU rT = eqComponentType lB rB && eqComponentType lU rU && eqComponentType lT rT
   {-# INLINE (==) #-}
 
 instance HashKey ArchetypeTy where
-  hashKey (ArchetypeTy b u) = hashComponentType b <> hashComponentType u
+  hashKey (ArchetypeTy b u t) = hashComponentType b <> hashComponentType u <> hashComponentType t
   {-# INLINE hashKey #-}
   
 -- This does not need to be IO, many others don't need to either, move to arbitrary state and use ST?
-addComponentType :: forall c . Component c => Proxy c -> ArchetypeTy -> ComponentId -> IO (ArchetypeTy, Int)
-addComponentType p (ArchetypeTy boxedTy unboxedTy) compId =
+addComponentType :: forall c . Component c => Proxy c -> ArchetypeTy -> ComponentId c -> IO (ArchetypeTy, Int)
+addComponentType p (ArchetypeTy boxedTy unboxedTy tagTy) compId =
   backing p
     (IO $ \s -> case addComponent boxedTy compId s of
-      (# s1, newBoxedTy, ind #) -> (# s1, (ArchetypeTy newBoxedTy unboxedTy, I# ind) #))
+      (# s1, newBoxedTy, ind #) -> (# s1, (ArchetypeTy newBoxedTy unboxedTy tagTy, I# ind) #))
     (IO $ \s -> case addComponent unboxedTy compId s of
-      (# s1, newUnboxedTy, ind #) -> (# s1, (ArchetypeTy boxedTy newUnboxedTy, I# ind) #))
+      (# s1, newUnboxedTy, ind #) -> (# s1, (ArchetypeTy boxedTy newUnboxedTy tagTy, I# ind) #))
+    (IO $ \s -> case addComponent tagTy compId s of
+      (# s1, newTagTy, ind #) -> (# s1, (ArchetypeTy boxedTy unboxedTy newTagTy, I# ind) #))
 {-# INLINE addComponentType #-}
 
 newtype ComponentType# = ComponentType# ByteArray#
@@ -124,7 +128,7 @@ hashComponentType (ComponentType# arr) = HashFn $ \i -> go 0# i
             | otherwise = go (n +# 1#) (hashWithSalt h (hashKey (I# (indexIntArray# arr n))))
 {-# INLINE hashComponentType #-}
 
-addComponent :: ComponentType# -> ComponentId -> State# RealWorld -> (# State# RealWorld, ComponentType#, Int# #)
+addComponent :: ComponentType# -> ComponentId c -> State# RealWorld -> (# State# RealWorld, ComponentType#, Int# #)
 addComponent (ComponentType# arr) (ComponentId (EntityId (I# i))) s0 =
   case newByteArray# (bSz +# 8#) s0 of
     (# s1, mar #) -> case go mar 0# s1 of
@@ -142,7 +146,7 @@ addComponent (ComponentType# arr) (ComponentId (EntityId (I# i))) s0 =
 {-# INLINE addComponent #-}
   
 -- Linear search for the component. Maybe instead use a (storable) hashtable? 
-indexComponent# :: ComponentType# -> ComponentId -> (Int# -> r) -> r -> r
+indexComponent# :: ComponentType# -> ComponentId c -> (Int# -> r) -> r -> r
 indexComponent# (ComponentType# arr) (ComponentId (EntityId (I# i))) s f = go 0#
   where
     sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
@@ -205,12 +209,16 @@ empty = do
                         , let columns      = Columns# szRef eidRef mar1 (ColumnSizes# bar) mar2
                               componentTyB = ComponentType# bar
                               componentTyF = ComponentType# bar
+                              componentTyT = ComponentType# bar
                           in Archetype{..}
                         #)
 
 -- Note: This performs no bounds checks. At this point we should have already checked if that entity and the component is in this table!
 readComponent :: forall a . Component a => Archetype -> Int -> Int -> IO a
-readComponent = backing (Proxy @a) readBoxedComponent (\a r c -> coerce $ readStorableComponent @(Store a) a r c)
+readComponent = backing (Proxy @a)
+  readBoxedComponent
+  (\a r c -> coerce $ readStorableComponent @(Store a) a r c)
+  (error "Hecs.Archetype.Internal:readComponent Tag placeholder. Do not evaluate tags")
 {-# INLINE readComponent #-}
 
 readStorableComponent :: Storable a => Archetype -> Int -> Int -> IO a
@@ -228,7 +236,10 @@ readBoxedComponent Archetype{columns = Columns# _ _ arrs _ _} (I# row) (I# colum
 {-# INLINE readBoxedComponent #-}
 
 writeComponent :: forall a . Component a => Archetype -> Int -> Int -> a -> IO ()
-writeComponent = backing (Proxy @a) writeBoxedComponent (\a r c el -> writeStorableComponent @(Store a) a r c (coerce el))
+writeComponent = backing (Proxy @a)
+  writeBoxedComponent
+  (\a r c el -> writeStorableComponent @(Store a) a r c (coerce el))
+  (\_ _ _ _ -> pure ()) -- TODO Is this fine? Probably, allows me to reuse this without any duplication
 {-# INLINE writeComponent #-}
 
 writeStorableComponent :: Storable a => Archetype -> Int -> Int -> a -> IO ()
@@ -245,16 +256,18 @@ writeBoxedComponent Archetype{columns = Columns# _ _ arrs _ _} (I# row) (I# colu
       s2 -> (# s2, () #)
 {-# INLINE writeBoxedComponent #-}
 
-lookupComponent :: forall c r . Component c => Proxy c -> Archetype -> ComponentId -> (Int -> r) -> r -> r
+lookupComponent :: forall c r . Component c => Proxy c -> Archetype -> ComponentId c -> (Int -> r) -> r -> r
 lookupComponent p = backing p
   (\Archetype{componentTyB} compId s -> indexComponent# componentTyB compId (\i -> s (I# i)))
   (\Archetype{componentTyF} compId s -> indexComponent# componentTyF compId (\i -> s (I# i)))
+  (\Archetype{componentTyT} compId s -> indexComponent# componentTyT compId (\i -> s (I# i)))
 {-# INLINE lookupComponent #-}
 
 getColumn :: forall c . Component c => Proxy c -> Archetype -> Int -> IO (Backend c)
 getColumn p (Archetype{columns = Columns# szRef _ boxed _ unboxed}) (I# col) = backing p
   (IO $ \s -> case readIntArray# szRef 0# s of (# s1, sz #) -> case readSmallArray# boxed col s1 of (# s2, arr #) -> (# s2, ArrayBackend sz (unsafeCoerce# arr) #))
   (IO $ \s -> case readIntArray# szRef 0# s of (# s1, sz #) -> case readSmallArray# unboxed col s1 of (# s2, arr #) -> (# s2, StorableBackend sz arr #))
+  (error "Hecs.Archetype.Internal:getColumn Tried getting the column of a tag")
 {-# INLINE getColumn #-}
 
 grow :: Columns# -> State# RealWorld -> State# RealWorld
@@ -283,11 +296,11 @@ grow (Columns# _ eids boxed _ unboxed) s = case copyUnboxed 0# (copyBoxed 0# s) 
     numBoxed = sizeofSmallMutableArray# boxed
     numUnboxed = sizeofSmallMutableArray# unboxed
 
-getEdge :: Archetype -> ComponentId -> IO ArchetypeEdge
-getEdge aty compId = readIORef (edges aty) >>= \em -> HTB.lookup em compId pure (pure $ ArchetypeEdge Nothing Nothing)
+getEdge :: Archetype -> ComponentId c -> IO ArchetypeEdge
+getEdge (Archetype{edges}) compId = readIORef edges >>= \em -> HTB.lookup em (coerce compId) pure (pure $ ArchetypeEdge Nothing Nothing)
 
-setEdge :: Archetype -> ComponentId -> ArchetypeEdge -> IO ()
-setEdge aty compId edge = readIORef (edges aty) >>= \em -> HTB.insert em compId edge >>= writeIORef (edges aty)
+setEdge :: Archetype -> ComponentId c -> ArchetypeEdge -> IO ()
+setEdge (Archetype{edges}) compId edge = readIORef edges >>= \em -> HTB.insert em (coerce compId) edge >>= writeIORef edges
 
 getColumnSizes :: Archetype -> ColumnSizes#
 getColumnSizes Archetype{columns = Columns# _ _ _ szs _} = szs
@@ -295,11 +308,12 @@ getColumnSizes Archetype{columns = Columns# _ _ _ szs _} = szs
 
 -- It is assumed that the archetype does not already have the component
 createArchetype :: ArchetypeTy -> ColumnSizes# -> IO Archetype
-createArchetype (ArchetypeTy boxedTy unboxedTy) szs = do
+createArchetype (ArchetypeTy boxedTy unboxedTy tagTy) szs = do
+  traceIO $ "New Archetype with type: " <> show (ArchetypeTy boxedTy unboxedTy tagTy)
   edgesM' <- HTB.new 8 -- TODO Inits
   edges <- newIORef edgesM'
   IO $ \s0 -> case newColumns initSz numBoxed numUnboxed szs s0 of
-    (# s1, cols #) -> (# s1, Archetype edges cols boxedTy unboxedTy #)
+    (# s1, cols #) -> (# s1, Archetype edges cols boxedTy unboxedTy tagTy #)
   where
     initSz = 8# -- TODO Inits
     numBoxed = numComponents boxedTy
@@ -338,11 +352,8 @@ moveEntity srcAty (I# row) (I# newColumn) dstAty = IO $ \s ->
                             (# s12, movedEid #) -> (# s12, (I# dstSz, EntityId (I# movedEid)) #)
   where
     !(Columns# srcSzRef srcEids _ _ _) = columns srcAty
-    !(Columns# dstSzRef dstEids dstBoxed _ dstUnboxed) = columns dstAty
-    dstNumBoxed = sizeofSmallMutableArray# dstBoxed
-    readCap s = if isTrue# (dstNumBoxed ># 0#)
-      then case readSmallArray# dstBoxed 0# s of (# s1, arr #) -> (# s1, sizeofMutableArray# arr #) 
-      else case readSmallArray# dstUnboxed 0# s of (# s1, arr #) -> (# s1, uncheckedIShiftRL# (sizeofMutableByteArray# arr) 3# #)
+    !(Columns# dstSzRef dstEids _ _ _) = columns dstAty
+    readCap s = case readMutVar# dstEids s of (# s1, arr #) -> (# s1, uncheckedIShiftRL# (sizeofMutableByteArray# arr) 3# #)
 
 moveEntity' :: Archetype -> Int# -> Int# -> Int# -> Archetype -> Int# -> State# RealWorld -> State# RealWorld
 moveEntity' srcAty srcLast row newColumn dstAty newRow s0 = copyUnboxed 0# 0# (copyBoxed 0# 0# s0)

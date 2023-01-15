@@ -30,7 +30,7 @@ getComponent :: forall c w r . (WorldClass w, Has w c) => w -> EntityId -> (c ->
 getComponent w eid = getComponentWithId w eid (getComponentId (Proxy @w) (Proxy @c))
 {-# INLINE getComponent #-}
 
-getComponentWithId :: forall c w r . (WorldClass w, Component c) => w -> EntityId -> ComponentId -> (c -> IO r) -> IO r -> IO r
+getComponentWithId :: forall c w r . (WorldClass w, Component c) => w -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
 getComponentWithId = getComponentI
 {-# INLINE getComponentWithId #-}
 
@@ -38,7 +38,7 @@ setComponent :: forall c w . (WorldClass w, Has w c) => w -> EntityId -> c -> IO
 setComponent w eid = setComponentWithId w eid (getComponentId (Proxy @w) (Proxy @c))
 {-# INLINE setComponent #-}
 
-setComponentWithId :: forall c w . (WorldClass w, Component c) => w -> EntityId -> ComponentId -> c -> IO w
+setComponentWithId :: forall c w . (WorldClass w, Component c) => w -> EntityId -> ComponentId c -> c -> IO w
 setComponentWithId = setComponentI
 {-# INLINE setComponentWithId #-} -- TODO This is bad
 

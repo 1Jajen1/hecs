@@ -59,6 +59,9 @@ instance (MonadBaseControl IO m, Core.WorldClass w) => MonadHecs w (HecsM w m) w
       Nothing -> unHecsM f
       Just c -> unHecsM $ s c
   {-# INLINE getComponentWithId #-}
+  hasTagWithId eid compId = HecsM $ do
+    w <- ask >>= liftBase . readIORef
+    liftBase $ Core.getComponentWithId w eid compId (const $ pure True) (pure False)
   filter :: forall b ty . Filter ty HasMainId -> (TypedArchetype ty -> b -> HecsM w m b) -> HecsM w m b -> HecsM w m b
   filter fi f z = HecsM ask >>= \wRef -> do
     st <- liftBaseWith $ \runInBase -> do

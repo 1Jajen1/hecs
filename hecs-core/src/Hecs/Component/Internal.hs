@@ -10,6 +10,10 @@ module Hecs.Component.Internal (
 , StorableBackend(..)
 , ArrayBackend(..)
 , IterateBackend(..)
+, TagBackend
+, NoTagBackend
+, ReadTagMsg
+, IsTag
 ) where
 
 import Hecs.Entity.Internal
@@ -20,26 +24,41 @@ import GHC.Exts
 import Data.Proxy
 import Data.Kind
 import Data.Int
-import Data.Word
+import Data.Word ( Word8, Word16, Word32, Word64 )
 import GHC.IO hiding (liftIO)
 import Control.Monad.IO.Class
+import GHC.TypeLits
 
-newtype ComponentId = ComponentId EntityId
+newtype ComponentId c = ComponentId EntityId
   deriving stock Show
   deriving newtype (Eq, HashKey, Storable)
+
+type family NoTagBackend a err :: Constraint where
+  NoTagBackend TagBackend err = TypeError ('Text err)
+  NoTagBackend _ _ = ()
+
+type ReadTagMsg = "Cannot read a tag"
+
+type family IsTag a err :: Constraint where
+  IsTag TagBackend _ = ()
+  IsTag a err = TypeError ('Text err :$$: ('Text "Cannot match " :<>: ShowType a :<>: 'Text " with expected " :<>: ShowType TagBackend))
 
 -- TODO Can we reasonably make a default instance?
 class Coercible a (Store a) => Component a where
   type Backend a :: Type
-  type Store a :: Type
-  backing :: Proxy a -> (Backend a ~ ArrayBackend (Store a) => r) -> ((Backend a ~ StorableBackend (Store a), Storable (Store a)) => r) -> r
+  type Store a :: Type -- This is slightly wrong with Tags now...
+  backing :: Proxy a
+    -> (Backend a ~ ArrayBackend (Store a) => r)
+    -> ((Backend a ~ StorableBackend (Store a), Storable (Store a)) => r)
+    -> (Backend a ~ TagBackend => r)
+    -> r
 
 newtype ViaStorable a = ViaStorable a
 
 instance Storable a => Component (ViaStorable a) where
   type Backend (ViaStorable a) = StorableBackend a
   type Store (ViaStorable a) = a
-  backing _ _ flat = flat
+  backing _ _ flat _ = flat
   {-# INLINE backing #-}
 
 deriving via (ViaStorable Int  ) instance Component Int
@@ -61,6 +80,8 @@ deriving via (ViaStorable Double) instance Component Double
 data ArrayBackend a = ArrayBackend Int# (MutableArray# RealWorld a)
 
 data StorableBackend a = StorableBackend Int# (MutableByteArray# RealWorld)
+
+data TagBackend
 
 class IterateBackend b a where
   iterateBackend :: MonadIO m => b a -> (a -> m (Maybe a)) -> m ()

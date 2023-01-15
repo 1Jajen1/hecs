@@ -19,7 +19,7 @@ data Position = Pos {-# UNPACK #-} !Int {-# UNPACK #-} !Float {-# UNPACK #-} !In
 
 data Test
   deriving stock Generic
-  deriving Component via (GenericFlat Test)
+  deriving Component via (ViaTag Test)
 
 makeWorld "World" [''Int, ''Int8, ''Position, ''Test]
 
@@ -34,6 +34,8 @@ main = do
     setComponent @Int eid 10
     getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
     e2 <- newEntity
+    setTag @Test e2
+    liftIO $ putStrLn "Set tag!"
     setComponent @Int e2 100
     setComponent @Position e2 (Pos 10 20 0)
     void . replicateM 1000 $ do

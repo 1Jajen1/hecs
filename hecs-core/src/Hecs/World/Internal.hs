@@ -25,13 +25,14 @@ import Data.Coerce
 import GHC.IO
 import Foreign.Storable (sizeOf)
 import Debug.Trace
+import GHC.Exts (Any)
 
 -- This is going to be wrapped by 'makeWorld "World" [''Comp1, ''Comp2, ...]' which enables
 -- making some component ids static. The componentMap is then only used for unknown/dynamic components
 data WorldImpl (preAllocatedEIds :: Nat) = WorldImpl {
   freshEId         :: !EntityId.FreshEntityId -- allocate unique entity ids with reuse
 , entityIndex      :: !(IntMap ArchetypeRecord) -- changes often and thus needs good allround performance
-, componentIndex   :: !(HTB.HashTable ComponentId (Arr.Array ArchetypeRecord)) -- changes infrequently if ever after the component graph stabilises, so only read perf matters, but also not too much
+, componentIndex   :: !(HTB.HashTable (ComponentId Any) (Arr.Array ArchetypeRecord)) -- changes infrequently if ever after the component graph stabilises, so only read perf matters, but also not too much
 , archetypeIndex   :: !(HTB.HashTable ArchetypeTy Archetype) -- changes infrequently once graph stabilises
 , emptyArchetype   :: !Archetype
 }
@@ -69,7 +70,7 @@ instance KnownNat n => WorldClass (WorldImpl n) where
     pure (w { freshEId = freshEID' })
   {-# INLINE deAllocateEntity #-}
 
-  setComponentI :: forall c . Component c => WorldImpl n -> EntityId -> ComponentId -> c -> IO (WorldImpl n)
+  setComponentI :: forall c . Component c => WorldImpl n -> EntityId -> ComponentId c -> c -> IO (WorldImpl n)
   setComponentI w@WorldImpl{entityIndex,archetypeIndex,componentIndex} eid compId comp = do
     let ArchetypeRecord row aty = IM.findWithDefault (error "Hecs.World.Internal:setComponentI entity id not in entity index!") (coerce eid) entityIndex
     -- Check if we have that component, if yes, write it, if no, move the entity
@@ -103,14 +104,17 @@ instance KnownNat n => WorldClass (WorldImpl n) where
                 (IO $ \s0 -> case Archetype.addColumnSize newColumn (sizeOf (undefined @_ @(Store c))) (getColumnSizes aty) s0 of
                   (# s1, newSzs #) -> case Archetype.createArchetype newTy newSzs of
                     IO f -> f s1)
+                (Archetype.createArchetype newTy (getColumnSizes aty))
+                
               Archetype.setEdge aty compId (ArchetypeEdge (Just dstAty) Nothing)
               newArchetypeIndex <- HTB.insert archetypeIndex newTy dstAty
 
               compIndex <- Archetype.iterateComponentIds newTy (\tyId ind -> do 
-                arr <- HTB.lookup ind tyId (`Arr.writeBack` ArchetypeRecord newColumn dstAty) $ Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord newColumn dstAty)
-                HTB.insert ind tyId arr) (pure componentIndex)
+                arr <- HTB.lookup ind (coerce tyId) (`Arr.writeBack` ArchetypeRecord newColumn dstAty) $ Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord newColumn dstAty)
+                HTB.insert ind (coerce tyId) arr) (pure componentIndex)
 
-              pure (w { archetypeIndex = newArchetypeIndex, componentIndex = compIndex }, dstAty)
+              -- TODO I cannot use w { ... } here because of componentIndex
+              pure (WorldImpl { archetypeIndex = newArchetypeIndex, componentIndex = compIndex, freshEId = freshEId w, emptyArchetype = emptyArchetype w, entityIndex = entityIndex }, dstAty)
 
           -- now move the entity and its current data between the two
           (newRow, movedEid) <- Archetype.moveEntity aty row newColumn dstAty
@@ -121,7 +125,7 @@ instance KnownNat n => WorldClass (WorldImpl n) where
           -- Important insert the moved first in case it is ourselves so that we overwrite it after
           pure $ w' { entityIndex = IM.insert (coerce eid) (ArchetypeRecord newRow dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row aty) entityIndex }
   {-# INLINE setComponentI #-} -- TODO I'd like INLINEABLE more but looks like specialize won't work ...
-  getComponentI :: forall c r . Component c => WorldImpl n -> EntityId -> ComponentId -> (c -> IO r) -> IO r -> IO r
+  getComponentI :: forall c r . Component c => WorldImpl n -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
   getComponentI WorldImpl{entityIndex} eid compId s f = do
     let ArchetypeRecord row aty = IM.findWithDefault (error "Hecs.World.Internal:getComponentI entity id not in entity index!") (coerce eid) entityIndex
     Archetype.lookupComponent (Proxy @c) aty compId (Archetype.readComponent aty row >=> s) f
@@ -144,7 +148,7 @@ instance KnownNat n => WorldClass (WorldImpl n) where
 
 -- A mapping from World -> ComponentId. A ComponentId from one World is not valid in another
 class Component c => Has w c where
-  getComponentId :: proxy w -> proxy c -> ComponentId
+  getComponentId :: proxy w -> proxy c -> ComponentId c
 
 -- All behavior a World has to support. makeWorld creates a newtype around WorldImpl and derives this
 class WorldClass w where
@@ -152,8 +156,8 @@ class WorldClass w where
   withEntityAllocator :: w -> IO a -> IO a
   allocateEntity :: w -> IO (w, EntityId)
   deAllocateEntity :: w -> EntityId -> IO w
-  setComponentI :: Component c => w -> EntityId -> ComponentId -> c -> IO w
-  getComponentI :: Component c => w -> EntityId -> ComponentId -> (c -> IO r) -> IO r -> IO r
+  setComponentI :: Component c => w -> EntityId -> ComponentId c -> c -> IO w
+  getComponentI :: Component c => w -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
   filterI :: w -> Filter ty Filter.HasMainId -> (Filter.TypedArchetype ty -> b -> IO b) -> IO b -> IO b
 
 -- TODO I am probably (most likely) a little excessive on the inline/inlineable pragmas
