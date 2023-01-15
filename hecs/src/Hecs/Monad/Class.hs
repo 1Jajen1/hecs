@@ -26,6 +26,8 @@ class Monad m => MonadHecs w m | m -> w where
   getComponentWithId :: (Core.NoTagBackend (Core.Backend c) Core.ReadTagMsg, Core.Component c) => Core.EntityId -> Core.ComponentId c -> (c -> m r) -> m r -> m r
   hasTagWithId :: (Core.IsTag (Core.Backend c) "hasTag only allowed for tag components", Core.Component c) => Core.EntityId -> Core.ComponentId c -> m Bool
   filter :: Core.Filter ty Core.HasMainId -> (Core.TypedArchetype ty -> b -> m b) -> m b -> m b
+  defer :: m a -> m a
+  sync :: m ()
 
 setComponent :: forall c w m . (MonadHecs w m, Core.Has w c) => Core.EntityId -> c -> m ()
 setComponent eid = setComponentWithId eid (Hecs.World.Internal.getComponentId (Proxy @w) (Proxy @c))

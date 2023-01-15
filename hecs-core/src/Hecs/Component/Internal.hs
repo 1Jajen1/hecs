@@ -46,7 +46,7 @@ type family IsTag a err :: Constraint where
 -- TODO Can we reasonably make a default instance?
 class Coercible a (Store a) => Component a where
   type Backend a :: Type
-  type Store a :: Type -- This is slightly wrong with Tags now...
+  type Store a :: Type
   backing :: Proxy a
     -> (Backend a ~ ArrayBackend (Store a) => r)
     -> ((Backend a ~ StorableBackend (Store a), Storable (Store a)) => r)

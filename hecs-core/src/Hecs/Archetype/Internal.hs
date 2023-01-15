@@ -21,9 +21,9 @@ module Hecs.Archetype.Internal (
 , createArchetype
 , getColumnSizes
 , addColumnSize
-, addEntity
 , iterateComponentIds
 , getColumn
+, addEntity
 ) where
 
 import Hecs.Component.Internal
@@ -201,7 +201,7 @@ empty = do
             (# s4, mar2 #) -> case unsafeFreezeByteArray# mbar s4 of
               (# s5, bar #) -> case newByteArray# 8# s5 of
                 (# s6, szRef #) -> case writeIntArray# szRef 0# 0# s6 of
-                  s7 -> case newByteArray# 16# s7 of
+                  s7 -> case newByteArray# 8# s7 of
                     (# s8, eidArr #) -> case newMutVar# eidArr s8 of
                       (# s9, eidRef #) ->
                         (#

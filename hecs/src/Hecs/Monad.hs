@@ -51,3 +51,10 @@ instance (MonadBaseControl IO m, Core.WorldClass w) => MonadHecs w (HecsM w m) w
         (runInBase z)
     restoreM st
   {-# INLINE filter #-}
+  defer act = do
+    a <- HecsM . ReaderT $ \w -> restoreM =<< liftBaseWith (\runInBase -> Core.defer w $ \w' -> runInBase $ runHecsM w' act)
+    sync
+    pure a
+  {-# INLINE defer #-}
+  sync = HecsM $ ask >>= \w -> liftBase $ Core.sync w
+  {-# INLINE sync #-}

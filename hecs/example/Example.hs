@@ -27,7 +27,9 @@ main = do
   w <- newWorld @World
   void . runHecsM w $ do
     eid <- newEntity
-    setComponent @Int eid 10
+    defer $ do
+      setComponent @Int eid 10
+      getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
     getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
     e2 <- newEntity
     setTag @Test e2

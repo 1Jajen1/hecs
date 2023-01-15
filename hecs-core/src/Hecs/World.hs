@@ -10,6 +10,8 @@ module Hecs.World (
 , WorldClass
 , WorldImpl
 , filter
+, defer
+, sync
 ) where
 
 import Prelude hiding (filter)
