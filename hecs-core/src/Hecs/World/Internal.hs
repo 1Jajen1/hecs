@@ -25,7 +25,6 @@ import qualified Data.IntMap.Strict as IM
 import Data.Coerce
 import GHC.IO
 import Foreign.Storable (sizeOf)
-import Debug.Trace
 import GHC.Exts (Any)
 import Data.IORef
 import Control.Concurrent.MVar
@@ -141,8 +140,9 @@ instance KnownNat n => WorldClass (WorldImpl n) where
   {-# INLINE setComponentI #-}
   getComponentI :: forall c r . Component c => WorldImpl n -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
   getComponentI WorldImpl{entityIndexRef} eid compId s f = do
-    ArchetypeRecord row aty <- IM.findWithDefault (error "Hecs.World.Internal:getComponentI entity id not in entity index!") (coerce eid) <$> readIORef entityIndexRef
-    Archetype.lookupComponent (Proxy @c) aty compId (Archetype.readComponent aty row >=> s) f
+    readIORef entityIndexRef >>= (\case
+      Just (ArchetypeRecord row aty) -> Archetype.lookupComponent (Proxy @c) aty compId (Archetype.readComponent aty row >=> s) f
+      Nothing -> f) . IM.lookup (coerce eid)
   {-# INLINE getComponentI #-}
   -- TODO Check if ghc removes the filter entirely
   filterI WorldImpl{componentIndexRef} fi f z = readIORef componentIndexRef >>= \componentIndex -> HTB.lookup componentIndex (Filter.extractMainId fi)
@@ -152,23 +152,22 @@ instance KnownNat n => WorldClass (WorldImpl n) where
             | n >= sz   = pure b
             | otherwise = do
               ArchetypeRecord _ aty <- Arr.read arr n
-              traceIO "Next record"
               if Filter.evaluate fi aty
-                then traceIO "Match" >> f (coerce aty) b >>= go (n + 1)
-                else traceIO "No match" >> go (n + 1) b
+                then f (coerce aty) b >>= go (n + 1)
+                else go (n + 1) b
       in z >>= go 0)
     z
   {-# INLINE filterI #-}
   defer w act = act $ w { isDeferred = True }
-  sync w@WorldImpl{deferredOpsRef} = modifyMVar_ deferredOpsRef $ \arr -> traceIO ("Sync " <> show (Arr.size arr) <> " ops") >> go arr 0 >> Arr.new (min 8 $ Arr.size arr `unsafeShiftR` 2) -- TODO Better shrinking?
+  sync w@WorldImpl{deferredOpsRef} = modifyMVar_ deferredOpsRef $ \arr -> go arr 0 >> Arr.new (max 8 $ Arr.size arr `unsafeShiftR` 2) -- TODO Better shrinking?
     where
       go !arr !n
         | n >= Arr.size arr = pure ()
         | otherwise = do
           Arr.read arr n >>= \case
-            CreateEntity e -> traceIO "Def Create" >> syncAllocateEntity w e
-            SetComponent e cId c -> traceIO "Def Set" >> syncSetComponent w e cId c
-            DestroyEntity e -> traceIO "Def Destroy" >> syncDestroyEntity w e
+            CreateEntity e -> syncAllocateEntity w e
+            SetComponent e cId c -> syncSetComponent w e cId c
+            DestroyEntity e -> syncDestroyEntity w e
           go arr (n + 1)
 
 syncAllocateEntity :: WorldImpl n -> EntityId -> IO ()

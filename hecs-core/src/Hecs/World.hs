@@ -41,7 +41,7 @@ setComponent w eid = setComponentWithId w eid (getComponentId (Proxy @w) (Proxy 
 
 setComponentWithId :: forall c w . (WorldClass w, Component c) => w -> EntityId -> ComponentId c -> c -> IO ()
 setComponentWithId = setComponentI
-{-# INLINE setComponentWithId #-} -- TODO This is bad
+{-# INLINE setComponentWithId #-}
 
 forFilter :: WorldClass w => w -> Filter ty HasMainId -> (TypedArchetype ty -> b -> IO b) -> IO b -> IO b
 forFilter = filterI

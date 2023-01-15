@@ -38,7 +38,6 @@ import Foreign.Storable
 import Unsafe.Coerce (unsafeCoerce)
 import Data.Proxy
 import Data.IORef
-import Debug.Trace
 
 -- TODO This whole file needs a rework once done
 -- TODO Add a custom allocator for the pinned aligned column arrays. This is to combat fragmentation
@@ -309,7 +308,7 @@ getColumnSizes Archetype{columns = Columns# _ _ _ szs _} = szs
 -- It is assumed that the archetype does not already have the component
 createArchetype :: ArchetypeTy -> ColumnSizes# -> IO Archetype
 createArchetype (ArchetypeTy boxedTy unboxedTy tagTy) szs = do
-  traceIO $ "New Archetype with type: " <> show (ArchetypeTy boxedTy unboxedTy tagTy)
+  -- traceIO $ "New Archetype with type: " <> show (ArchetypeTy boxedTy unboxedTy tagTy)
   edgesM' <- HTB.new 8 -- TODO Inits
   edges <- newIORef edgesM'
   IO $ \s0 -> case newColumns initSz numBoxed numUnboxed szs s0 of

@@ -20,7 +20,10 @@ data Test
   deriving stock Generic
   deriving Component via (ViaTag Test)
 
-makeWorld "World" [''Int, ''Int8, ''Position, ''Test]
+data Boxed = Boxed Int
+  deriving Component via (ViaBoxed Boxed)
+
+makeWorld "World" [''Int, ''Int8, ''Position, ''Test, ''Boxed]
 
 main :: IO ()
 main = do
@@ -28,8 +31,9 @@ main = do
   void . runHecsM w $ do
     eid <- newEntity
     defer $ do
-      setComponent @Int eid 10
-      getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
+      eid <- newEntity
+      setComponent @Boxed eid $ Boxed 10
+      -- getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
     getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
     e2 <- newEntity
     setTag @Test e2
