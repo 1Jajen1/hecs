@@ -164,10 +164,12 @@ instance KnownNat n => WorldClass (WorldImpl n) where
     where
       go !arr !n
         | n >= Arr.size arr = pure ()
-        | otherwise = Arr.read arr n >>= \case
-          CreateEntity e -> traceIO "Defered Create" >> syncAllocateEntity w e
-          SetComponent e cId c -> traceIO "Defered Set" >> syncSetComponent w e cId c
-          DestroyEntity e -> traceIO "Defered Destroy" >> syncDestroyEntity w e
+        | otherwise = do
+          Arr.read arr n >>= \case
+            CreateEntity e -> syncAllocateEntity w e
+            SetComponent e cId c -> syncSetComponent w e cId c
+            DestroyEntity e -> syncDestroyEntity w e
+          go arr (n + 1)
 
 syncAllocateEntity :: WorldImpl n -> EntityId -> IO ()
 syncAllocateEntity WorldImpl{..} eid = do
