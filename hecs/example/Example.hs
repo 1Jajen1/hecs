@@ -11,7 +11,6 @@ import Hecs as Hecs
 import GHC.Generics
 import Foreign.Storable
 import Control.Monad
-import Data.Proxy
 
 data Position = Pos {-# UNPACK #-} !Int {-# UNPACK #-} !Float {-# UNPACK #-} !Int
   deriving stock (Show, Generic)

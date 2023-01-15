@@ -12,6 +12,8 @@ import Hecs.Entity.Internal
 
 import Hecs.Component
 
+import Data.Proxy
+
 makeWorld :: String -> [Name] -> Q [Dec]
 makeWorld wN names = do
   let wName = mkName wN
