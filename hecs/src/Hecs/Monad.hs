@@ -46,7 +46,7 @@ instance (MonadBaseControl IO m, Core.WorldClass w) => MonadHecs w (HecsM w m) w
   filter :: forall b ty . Filter ty HasMainId -> (TypedArchetype ty -> b -> HecsM w m b) -> HecsM w m b -> HecsM w m b
   filter fi f z = HecsM ask >>= \w -> do
     st <- liftBaseWith $ \runInBase -> do
-      Core.filter @_ @_ @(StM m b) w fi
+      Core.forFilter @_ @_ @(StM m b) w fi
         (\aty acc -> runInBase $ restoreM acc >>= f aty)
         (runInBase z)
     restoreM st

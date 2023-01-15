@@ -29,6 +29,7 @@ import Debug.Trace
 import GHC.Exts (Any)
 import Data.IORef
 import Control.Concurrent.MVar
+import Data.Bits
 
 -- This is going to be wrapped by 'makeWorld "World" [''Comp1, ''Comp2, ...]' which enables
 -- making some component ids static. The componentMap is then only used for unknown/dynamic components
@@ -159,14 +160,14 @@ instance KnownNat n => WorldClass (WorldImpl n) where
     z
   {-# INLINE filterI #-}
   defer w act = act $ w { isDeferred = True }
-  sync w@WorldImpl{deferredOpsRef} = modifyMVar_ deferredOpsRef $ \arr -> go arr 0 >> Arr.new 8
+  sync w@WorldImpl{deferredOpsRef} = modifyMVar_ deferredOpsRef $ \arr -> go arr 0 >> Arr.new (min 8 $ Arr.size arr `unsafeShiftR` 2) -- TODO Better shrinking?
     where
       go !arr !n
         | n >= Arr.size arr = pure ()
         | otherwise = Arr.read arr n >>= \case
-          CreateEntity e -> syncAllocateEntity w e
-          SetComponent e cId c -> syncSetComponent w e cId c
-          DestroyEntity e -> syncDestroyEntity w e
+          CreateEntity e -> traceIO "Defered Create" >> syncAllocateEntity w e
+          SetComponent e cId c -> traceIO "Defered Set" >> syncSetComponent w e cId c
+          DestroyEntity e -> traceIO "Defered Destroy" >> syncDestroyEntity w e
 
 syncAllocateEntity :: WorldImpl n -> EntityId -> IO ()
 syncAllocateEntity WorldImpl{..} eid = do

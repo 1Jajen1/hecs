@@ -9,7 +9,7 @@ module Hecs.World (
 , setComponentWithId
 , WorldClass
 , WorldImpl
-, filter
+, forFilter
 , defer
 , sync
 ) where
@@ -43,6 +43,6 @@ setComponentWithId :: forall c w . (WorldClass w, Component c) => w -> EntityId 
 setComponentWithId = setComponentI
 {-# INLINE setComponentWithId #-} -- TODO This is bad
 
-filter :: WorldClass w => w -> Filter ty HasMainId -> (TypedArchetype ty -> b -> IO b) -> IO b -> IO b
-filter = filterI
-{-# INLINE filter #-}
+forFilter :: WorldClass w => w -> Filter ty HasMainId -> (TypedArchetype ty -> b -> IO b) -> IO b -> IO b
+forFilter = filterI
+{-# INLINE forFilter #-}
