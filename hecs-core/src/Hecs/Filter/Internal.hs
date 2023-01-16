@@ -1,5 +1,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE UnboxedTuples #-}
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 module Hecs.Filter.Internal (
   Filter(..)
@@ -13,6 +15,7 @@ module Hecs.Filter.Internal (
 , componentWithId
 , TypedArchetype(..)
 , getColumnWithId
+, iterateArchetype
 , TypedHas
 ) where
 
@@ -21,14 +24,15 @@ import qualified Prelude
 
 import Hecs.Archetype.Internal
 import Hecs.Component.Internal
+import Hecs.Entity.Internal
 
 import Data.Proxy
 import Data.Kind
 import GHC.TypeLits
 import Data.Type.Bool hiding (Not)
 import qualified Data.Type.Bool
-import GHC.Exts (Any)
-import Data.Coerce
+import GHC.Exts
+import GHC.IO (IO(..))
 
 data FilterContext = HasMainId | DoesNotHaveMainId
 
@@ -93,6 +97,17 @@ getColumnWithId p (TypedArchetype aty) compId = lookupComponent p aty compId
   (\col -> getColumn p aty col)
   (error "Hecs.Filter.Internal:getColumn Component that was on the type level wasn't on the value level")
 {-# INLINE getColumnWithId #-}
+
+iterateArchetype :: TypedArchetype ty -> (Int -> EntityId -> a -> IO a) -> IO a -> IO a
+iterateArchetype (TypedArchetype (Archetype{columns = Columns# szRef eidsRef _ _ _})) f (IO z) = IO $ \s0 ->
+  case readIntArray# szRef 0# s0 of
+    (# s1, sz #) -> case readMutVar# eidsRef s1 of
+      (# s2, eidArr #) -> case z s2 of (# s3, b #) -> go eidArr sz 0# b s3
+  where
+    go arr sz n b s
+      | isTrue# (n >=# sz) = (# s, b #)
+      | otherwise = case readIntArray# arr n s of (# s1, eid #) -> case f (I# n) (EntityId (I# eid)) b of IO g -> case g s1 of (# s2, st #) -> go arr sz (n +# 1#) st s2
+{-# INLINE iterateArchetype #-}
 
 type family TypedHas ty (c :: Type) :: Constraint where
   TypedHas ty c = If (TypedHasBool ty c) (() :: Constraint) (TypeError ('Text "No type level evidence that this archetype has a component typed: " :<>: ShowType c :$$: Text "You may want to use an unsafe access method"))

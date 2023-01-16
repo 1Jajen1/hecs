@@ -54,7 +54,10 @@ main = do
     Hecs.filter (component @World @Int .&&. component @World @Position)
       (\aty _ -> do
         x <- getColumn @World @Int aty
-        iterateBackend x $ \el -> pure $ Just (el + 1))
+        iterateArchetype aty $ \n e -> do
+          liftIO $ print e
+          readStored x n >>= liftIO . print 
+          )
       (pure ())
     getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
     getComponent @Int e2 (pure . Just) (pure Nothing) >>= liftIO . print

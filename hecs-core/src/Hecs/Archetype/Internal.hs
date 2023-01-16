@@ -26,7 +26,7 @@ module Hecs.Archetype.Internal (
 , addEntity
 ) where
 
-import Hecs.Component.Internal
+import Hecs.Component.Internal hiding (readComponent, writeComponent)
 
 import Hecs.Entity.Internal ( EntityId(..) )
 import qualified Hecs.HashTable.Boxed as HTB
@@ -47,7 +47,7 @@ data ArchetypeEdge = ArchetypeEdge !(Maybe Archetype) !(Maybe Archetype)
 -- TODO Make sum type for tags and other non-storage affecting data? I could also just share the column structure as it is entirely mutable
 data Archetype = Archetype {
   edges        :: {-# UNPACK #-} !(IORef (HTB.HashTable (ComponentId Any) ArchetypeEdge))
-, columns      :: {-# UNPACK #-} Columns#
+, columns      :: {-# UNPACK #-} !Columns#
 , componentTyB :: ComponentType#
 , componentTyF :: ComponentType#
 , componentTyT :: ComponentType#
@@ -263,9 +263,9 @@ lookupComponent p = backing p
 {-# INLINE lookupComponent #-}
 
 getColumn :: forall c . Component c => Proxy c -> Archetype -> Int -> IO (Backend c)
-getColumn p (Archetype{columns = Columns# szRef _ boxed _ unboxed}) (I# col) = backing p
-  (IO $ \s -> case readIntArray# szRef 0# s of (# s1, sz #) -> case readSmallArray# boxed col s1 of (# s2, arr #) -> (# s2, ArrayBackend sz (unsafeCoerce# arr) #))
-  (IO $ \s -> case readIntArray# szRef 0# s of (# s1, sz #) -> case readSmallArray# unboxed col s1 of (# s2, arr #) -> (# s2, StorableBackend sz arr #))
+getColumn p (Archetype{columns = Columns# _ _ boxed _ unboxed}) (I# col) = backing p
+  (IO $ \s -> case readSmallArray# boxed col s of (# s1, arr #) -> (# s1, ArrayBackend (unsafeCoerce# arr) #))
+  (IO $ \s -> case readSmallArray# unboxed col s of (# s1, arr #) -> (# s1, StorableBackend arr #))
   (error "Hecs.Archetype.Internal:getColumn Tried getting the column of a tag")
 {-# INLINE getColumn #-}
 

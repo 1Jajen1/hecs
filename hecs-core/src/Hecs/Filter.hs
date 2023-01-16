@@ -9,6 +9,7 @@ module Hecs.Filter (
 , TypedArchetype(..)
 , getColumnWithId
 , TypedHas
+, iterateArchetype
 ) where
 
 import Prelude hiding (not)

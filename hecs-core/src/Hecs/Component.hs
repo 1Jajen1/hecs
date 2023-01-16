@@ -7,7 +7,7 @@ module Hecs.Component (
 , ViaStorable(..)
 , StorableBackend
 , ArrayBackend
-, IterateBackend(..)
+, ComponentBackend(..)
 , ViaBoxed(..)
 , NoTagBackend
 , ReadTagMsg

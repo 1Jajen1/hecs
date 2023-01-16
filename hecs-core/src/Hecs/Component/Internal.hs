@@ -9,7 +9,7 @@ module Hecs.Component.Internal (
 , ViaStorable(..)
 , StorableBackend(..)
 , ArrayBackend(..)
-, IterateBackend(..)
+, ComponentBackend(..)
 , TagBackend
 , NoTagBackend
 , ReadTagMsg
@@ -76,42 +76,24 @@ deriving via (ViaStorable Word64) instance Component Word64
 deriving via (ViaStorable Float ) instance Component Float
 deriving via (ViaStorable Double) instance Component Double
 
--- Iterating the backends
-data ArrayBackend a = ArrayBackend Int# (MutableArray# RealWorld a)
+data ArrayBackend a = ArrayBackend (MutableArray# RealWorld a)
 
-data StorableBackend a = StorableBackend Int# (MutableByteArray# RealWorld)
+data StorableBackend a = StorableBackend (MutableByteArray# RealWorld)
 
 data TagBackend
 
-class IterateBackend b a where
-  iterateBackend :: MonadIO m => b a -> (a -> m (Maybe a)) -> m ()
+class ComponentBackend b a where
+  readComponent :: MonadIO m => b a -> Int -> m a
+  writeComponent :: MonadIO m => b a -> Int -> a -> m ()
 
-instance IterateBackend ArrayBackend a where
-  iterateBackend (ArrayBackend sz arr) f = go 0#
-    where
-      go n
-        | isTrue# (n >=# sz) = pure ()
-        | otherwise = do
-          el <- liftIO $ IO (readArray# arr n)
-          f el >>= \case
-            Just newEl -> liftIO $ IO $ \s -> (# writeArray# arr n newEl s, () #)
-            Nothing -> pure ()
-          go (n +# 1#)
-  {-# INLINE iterateBackend #-}
+instance ComponentBackend ArrayBackend a where
+  readComponent (ArrayBackend arr) (I# n) = liftIO $ IO (readArray# arr n)
+  {-# INLINE readComponent #-}
+  writeComponent (ArrayBackend arr) (I# n) el = liftIO . IO $ \s -> case writeArray# arr n el s of s1 -> (# s1, () #)
+  {-# INLINE writeComponent #-}
 
-instance Storable a => IterateBackend StorableBackend a where
-  iterateBackend (StorableBackend sz arr) f = go initAddr
-    where
-      initAddr = mutableByteArrayContents# arr
-      lastAddr = initAddr `plusAddr#` (sz *# bSz)
-      !(I# bSz) = sizeOf (undefined @_ @a)
-      go addr
-        | isTrue# (addr `eqAddr#` lastAddr) = pure ()
-        | otherwise = do
-          el <- liftIO $ peek (Ptr addr)
-          f el >>= \case
-            Just newEl -> liftIO $ poke (Ptr addr) newEl
-            Nothing -> pure ()
-          go (addr `plusAddr#` bSz)
-  {-# INLINE iterateBackend #-}
-
+instance Storable a => ComponentBackend StorableBackend a where
+  readComponent (StorableBackend arr) n = liftIO $ peekElemOff (Ptr (mutableByteArrayContents# arr)) n
+  {-# INLINE readComponent #-}
+  writeComponent (StorableBackend arr) n el = liftIO $ pokeElemOff (Ptr (mutableByteArrayContents# arr)) n el
+  {-# INLINE writeComponent #-}
