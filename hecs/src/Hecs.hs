@@ -11,6 +11,7 @@ module Hecs (
 , module Hecs.Filter
 , component, componentWithId
 , getColumn, getColumnWithId
+, getEntityColumn
 , EntityId(..)
 , ComponentId(..)
 , iterateArchetype
@@ -28,7 +29,7 @@ import qualified Hecs.Component
 import Hecs.World.TH
 import Hecs.World
 import qualified Hecs.World.Internal
-import Hecs.Filter hiding (component, componentWithId, getColumnWithId, iterateArchetype)
+import Hecs.Filter hiding (component, componentWithId, getColumnWithId, getEntityColumn, iterateArchetype)
 import qualified Hecs.Filter
 import Control.Monad.Base
 import Control.Monad.Trans.Control
@@ -49,6 +50,10 @@ getColumn aty = getColumnWithId @c @ty aty (getComponentId @w @c)
 getColumnWithId :: forall c ty m . (Component c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> ComponentId c -> m (Backend c)
 getColumnWithId aty c = liftBase $ Hecs.Filter.getColumnWithId (Proxy @c) aty c
 {-# INLINE getColumnWithId #-}
+
+getEntityColumn :: MonadBase IO m => TypedArchetype ty -> m (StorableBackend EntityId)
+getEntityColumn aty = liftBase $ Hecs.Filter.getEntityColumn aty
+{-# INLINE getEntityColumn #-}
 
 getComponentId :: forall w c . Has w c => ComponentId c
 getComponentId = Hecs.World.Internal.getComponentId (Proxy @w) (Proxy @c)

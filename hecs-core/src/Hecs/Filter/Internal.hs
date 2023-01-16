@@ -17,6 +17,7 @@ module Hecs.Filter.Internal (
 , getColumnWithId
 , iterateArchetype
 , TypedHas
+, getEntityColumn
 ) where
 
 import Prelude hiding (not)
@@ -97,6 +98,10 @@ getColumnWithId p (TypedArchetype aty) compId = lookupComponent p aty compId
   (\col -> getColumn p aty col)
   (error "Hecs.Filter.Internal:getColumn Component that was on the type level wasn't on the value level")
 {-# INLINE getColumnWithId #-}
+
+getEntityColumn :: TypedArchetype ty -> IO (StorableBackend EntityId)
+getEntityColumn (TypedArchetype Archetype{columns = Columns# _ eidsRef _ _ _}) =
+  IO $ \s -> case readMutVar# eidsRef s of (# s1, arr #) -> (# s1, StorableBackend arr #) 
 
 iterateArchetype :: TypedArchetype ty -> (Int -> EntityId -> a -> IO a) -> IO a -> IO a
 iterateArchetype (TypedArchetype (Archetype{columns = Columns# szRef eidsRef _ _ _})) f (IO z) = IO $ \s0 ->

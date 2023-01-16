@@ -15,11 +15,12 @@ import qualified Hecs.World.Internal (getComponentId)
 import qualified Hecs.Filter as Core
 
 import Data.Proxy
+import Data.Kind
 
 -- TODO Get rid of internal imports, use higher level ones only to avoid relying on hecs-core internals here
 -- TODO Consistency between names (hecs <-> hecs-core)
 
-class Monad m => MonadHecs w m | m -> w where
+class Monad m => MonadHecs (w :: Type) (m :: Type -> Type) | m -> w where
   newEntity :: m Core.EntityId
   freeEntity :: Core.EntityId -> m ()
   setComponentWithId :: Core.Component c => Core.EntityId -> Core.ComponentId c -> c -> m ()

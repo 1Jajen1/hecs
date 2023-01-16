@@ -8,6 +8,7 @@ module Hecs.Filter (
 , component
 , TypedArchetype(..)
 , getColumnWithId
+, getEntityColumn
 , TypedHas
 , iterateArchetype
 ) where
