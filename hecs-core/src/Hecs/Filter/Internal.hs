@@ -18,12 +18,13 @@ module Hecs.Filter.Internal (
 , iterateArchetype
 , TypedHas
 , getEntityColumn
+, And, Or, Not
 ) where
 
 import Prelude hiding (not)
 import qualified Prelude
 
-import Hecs.Archetype.Internal
+import Hecs.Archetype.Internal hiding (empty)
 import Hecs.Component.Internal
 import Hecs.Entity.Internal
 
@@ -70,7 +71,7 @@ NotFilter lId f .&&. NotFilter _ g = NotFilter lId $ \a -> f a && g a
 
 data Or l r
 
-(.||.) :: Filter tyL l -> Filter tyR r -> Filter (Or l r) (CombineCtx l r)
+(.||.) :: Filter tyL l -> Filter tyR r -> Filter (Or tyL tyR) (CombineCtx l r)
 WithMain lId f .||. WithMain _ g = WithMain lId $ \a -> f a || g a
 NotFilter _ f .||. WithMain rId g = WithMain rId $ \a -> f a || g a
 WithMain lId f .||. NotFilter _ g = WithMain lId $ \a -> f a || g a

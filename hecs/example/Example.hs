@@ -33,6 +33,7 @@ main = do
     defer $ do
       eid <- newEntity
       setComponent @Boxed eid $ Boxed 10
+      setComponent @Int eid 10
       -- getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
     getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
     e2 <- newEntity
@@ -51,7 +52,7 @@ main = do
       -- liftIO $ print $ sizeOf (undefined @_ @Position)
       -- liftIO $ print $ alignment (undefined @_ @Position)
       pure ()
-    Hecs.filter (component @World @Int .&&. component @World @Position)
+    Hecs.filter (filterDSL @World @'[Int, Or Boxed Position])
       (\aty _ -> do
         x <- getColumn @World @Int aty
         es <- getEntityColumn aty
