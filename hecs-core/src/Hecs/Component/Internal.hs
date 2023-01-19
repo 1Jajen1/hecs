@@ -26,8 +26,8 @@ import Data.Kind
 import Data.Int
 import Data.Word ( Word8, Word16, Word32, Word64 )
 import GHC.IO hiding (liftIO)
-import Control.Monad.IO.Class
 import GHC.TypeLits
+import Control.Monad.Base
 
 newtype ComponentId c = ComponentId EntityId
   deriving stock Show
@@ -83,17 +83,17 @@ data StorableBackend a = StorableBackend (MutableByteArray# RealWorld)
 data TagBackend
 
 class ComponentBackend b a where
-  readComponent :: MonadIO m => b a -> Int -> m a
-  writeComponent :: MonadIO m => b a -> Int -> a -> m ()
+  readColumn :: MonadBase IO m => b a -> Int -> m a
+  writeColumn :: MonadBase IO m => b a -> Int -> a -> m ()
 
 instance ComponentBackend ArrayBackend a where
-  readComponent (ArrayBackend arr) (I# n) = liftIO $ IO (readArray# arr n)
-  {-# INLINE readComponent #-}
-  writeComponent (ArrayBackend arr) (I# n) el = liftIO . IO $ \s -> case writeArray# arr n el s of s1 -> (# s1, () #)
-  {-# INLINE writeComponent #-}
+  readColumn (ArrayBackend arr) (I# n) = liftBase $ IO (readArray# arr n)
+  {-# INLINE readColumn #-}
+  writeColumn (ArrayBackend arr) (I# n) el = liftBase . IO $ \s -> case writeArray# arr n el s of s1 -> (# s1, () #)
+  {-# INLINE writeColumn #-}
 
 instance Storable a => ComponentBackend StorableBackend a where
-  readComponent (StorableBackend arr) n = liftIO $ peekElemOff (Ptr (mutableByteArrayContents# arr)) n
-  {-# INLINE readComponent #-}
-  writeComponent (StorableBackend arr) n el = liftIO $ pokeElemOff (Ptr (mutableByteArrayContents# arr)) n el
-  {-# INLINE writeComponent #-}
+  readColumn (StorableBackend arr) n = liftBase $ peekElemOff (Ptr (mutableByteArrayContents# arr)) n
+  {-# INLINE readColumn #-}
+  writeColumn (StorableBackend arr) n el = liftBase $ pokeElemOff (Ptr (mutableByteArrayContents# arr)) n el
+  {-# INLINE writeColumn #-}

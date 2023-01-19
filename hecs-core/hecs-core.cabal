@@ -20,6 +20,8 @@ common common-options
                      , deepseq
                      , template-haskell
                      , containers
+                     , transformers-base
+                     , monad-control
   
   ghc-options:         -Wall
                        -Wcompat

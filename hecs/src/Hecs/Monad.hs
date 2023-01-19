@@ -44,12 +44,7 @@ instance (MonadBaseControl IO m, Core.WorldClass w) => MonadHecs w (HecsM w m) w
   {-# INLINE getComponentWithId #-}
   hasTagWithId eid compId = HecsM $ ask >>= \w -> liftBase $ Core.getComponentWithId w eid compId (const $ pure True) (pure False)
   filter :: forall b ty . Filter ty HasMainId -> (TypedArchetype ty -> b -> HecsM w m b) -> HecsM w m b -> HecsM w m b
-  filter fi f z = HecsM ask >>= \w -> do
-    st <- liftBaseWith $ \runInBase -> do
-      Core.forFilter @_ @_ @(StM m b) w fi
-        (\aty acc -> runInBase $ restoreM acc >>= f aty)
-        (runInBase z)
-    restoreM st
+  filter fi f z = HecsM ask >>= \w -> Core.forFilter w fi f z
   {-# INLINE filter #-}
   defer act = do
     a <- HecsM . ReaderT $ \w -> restoreM =<< liftBaseWith (\runInBase -> Core.defer w $ \w' -> runInBase $ runHecsM w' act)

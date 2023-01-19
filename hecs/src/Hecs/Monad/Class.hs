@@ -1,5 +1,6 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 module Hecs.Monad.Class (
   MonadHecs(..)
 , setComponent
@@ -31,15 +32,15 @@ class Monad m => MonadHecs (w :: Type) (m :: Type -> Type) | m -> w where
   sync :: m ()
 
 setComponent :: forall c w m . (MonadHecs w m, Core.Has w c) => Core.EntityId -> c -> m ()
-setComponent eid = setComponentWithId eid (Hecs.World.Internal.getComponentId (Proxy @w) (Proxy @c))
+setComponent eid = setComponentWithId eid (Hecs.World.Internal.getComponentId (Proxy @w))
 {-# INLINE setComponent #-}
 
 getComponent :: forall c w m r . (Core.NoTagBackend (Core.Backend c) Core.ReadTagMsg, MonadHecs w m, Core.Has w c) => Core.EntityId -> (c -> m r) -> m r -> m r
-getComponent eid = getComponentWithId eid (Hecs.World.Internal.getComponentId (Proxy @w) (Proxy @c))
+getComponent eid = getComponentWithId eid (Hecs.World.Internal.getComponentId (Proxy @w))
 {-# INLINE getComponent #-}
 
 setTag :: forall c w m . (Core.IsTag (Core.Backend c) "setTag only allows tag components", MonadHecs w m, Core.Has w c) => Core.EntityId -> m ()
-setTag eid = setComponentWithId @_ @_ @c eid (Hecs.World.Internal.getComponentId (Proxy @w) (Proxy @c)) (error "Hecs.Monad.Class:setTag evaluated tag placeholder!")
+setTag eid = setComponentWithId @_ @_ @c eid (Hecs.World.Internal.getComponentId (Proxy @w)) (error "Hecs.Monad.Class:setTag evaluated tag placeholder!")
 {-# INLINE setTag #-}
 
 setTagWithId :: forall c w m . (Core.IsTag (Core.Backend c) "setTagWithId only allows tag components", MonadHecs w m, Core.Component c) => Core.EntityId -> Core.ComponentId c -> m ()
@@ -47,5 +48,5 @@ setTagWithId eid tagId = setComponentWithId @_ @_ @c eid tagId (error "Hecs.Mona
 {-# INLINE setTagWithId #-}
 
 hasTag :: forall c w m . (Core.IsTag (Core.Backend c) "hasTag only allowed for tag components", MonadHecs w m, Core.Has w c) => Core.EntityId -> m Bool
-hasTag eid = hasTagWithId @w @m @c eid (Hecs.World.Internal.getComponentId (Proxy @w) (Proxy @c))
+hasTag eid = hasTagWithId @w @m @c eid (Hecs.World.Internal.getComponentId (Proxy @w))
 {-# INLINE hasTag #-}

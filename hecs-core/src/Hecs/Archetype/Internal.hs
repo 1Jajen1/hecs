@@ -26,8 +26,7 @@ module Hecs.Archetype.Internal (
 , addEntity
 ) where
 
-import Hecs.Component.Internal hiding (readComponent, writeComponent)
-
+import Hecs.Component.Internal
 import Hecs.Entity.Internal ( EntityId(..) )
 import qualified Hecs.HashTable.Boxed as HTB
 import Hecs.HashTable.HashKey
@@ -56,8 +55,8 @@ data Archetype = Archetype {
 getTy :: Archetype -> ArchetypeTy
 getTy Archetype{componentTyB, componentTyF, componentTyT} = ArchetypeTy componentTyB componentTyF componentTyT 
 
-getNumEntities :: Archetype -> IO Int
-getNumEntities (Archetype{columns = Columns# szRef _ _ _ _}) = IO $ \s -> case readIntArray# szRef 0# s of (# s1, i #) -> (# s1, I# i #) 
+-- getNumEntities :: Archetype -> IO Int
+-- getNumEntities (Archetype{columns = Columns# szRef _ _ _ _}) = IO $ \s -> case readIntArray# szRef 0# s of (# s1, i #) -> (# s1, I# i #) 
 
 -- This is a monoid?
 data ArchetypeTy = ArchetypeTy ComponentType# ComponentType# ComponentType#
@@ -97,9 +96,9 @@ instance HashKey ArchetypeTy where
   {-# INLINE hashKey #-}
   
 -- This does not need to be IO, many others don't need to either, move to arbitrary state and use ST?
-addComponentType :: forall c . Component c => Proxy c -> ArchetypeTy -> ComponentId c -> IO (ArchetypeTy, Int)
-addComponentType p (ArchetypeTy boxedTy unboxedTy tagTy) compId =
-  backing p
+addComponentType :: forall c . Component c => ArchetypeTy -> ComponentId c -> IO (ArchetypeTy, Int)
+addComponentType (ArchetypeTy boxedTy unboxedTy tagTy) compId =
+  backing (Proxy @c)
     (IO $ \s -> case addComponent boxedTy compId s of
       (# s1, newBoxedTy, ind #) -> (# s1, (ArchetypeTy newBoxedTy unboxedTy tagTy, I# ind) #))
     (IO $ \s -> case addComponent unboxedTy compId s of
@@ -174,8 +173,8 @@ data Columns# :: UnliftedType where
 
 newtype ColumnSizes# = ColumnSizes# ByteArray#
 
-showSzs :: ColumnSizes# -> String
-showSzs (ColumnSizes# arr) = showTy (ComponentType# arr)
+-- showSzs :: ColumnSizes# -> String
+-- showSzs (ColumnSizes# arr) = showTy (ComponentType# arr)
 
 addColumnSize :: Int -> Int -> ColumnSizes# -> State# RealWorld -> (# State# RealWorld, ColumnSizes# #)
 addColumnSize (I# at) (I# bSz) (ColumnSizes# szs) s0 =
@@ -255,8 +254,8 @@ writeBoxedComponent Archetype{columns = Columns# _ _ arrs _ _} (I# row) (I# colu
       s2 -> (# s2, () #)
 {-# INLINE writeBoxedComponent #-}
 
-lookupComponent :: forall c r . Component c => Proxy c -> Archetype -> ComponentId c -> (Int -> r) -> r -> r
-lookupComponent p = backing p
+lookupComponent :: forall c r . Component c => Archetype -> ComponentId c -> (Int -> r) -> r -> r
+lookupComponent = backing (Proxy @c)
   (\Archetype{componentTyB} compId s -> indexComponent# componentTyB compId (\i -> s (I# i)))
   (\Archetype{componentTyF} compId s -> indexComponent# componentTyF compId (\i -> s (I# i)))
   (\Archetype{componentTyT} compId s -> indexComponent# componentTyT compId (\i -> s (I# i)))

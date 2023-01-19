@@ -88,15 +88,15 @@ not (NotFilter m f) = WithMain m $ Prelude.not . f
 -- TODO 
 -- This has a small inefficiency: The main component id is guaranteed to be there, so no point in rechecking
 -- but since we don't know who or what the main id is, we have no choice here
-componentWithId :: Component c => Proxy c -> ComponentId c -> Filter c HasMainId
-componentWithId p compId = WithMain (coerce compId) $ \aty -> lookupComponent p aty compId (const True) False
+componentWithId :: Component c => ComponentId c -> Filter c HasMainId
+componentWithId compId = WithMain (coerce compId) $ \aty -> lookupComponent aty compId (const True) False
 {-# INLINE componentWithId #-}
 
 newtype TypedArchetype ty = TypedArchetype Archetype
 
-getColumnWithId :: (Component c, TypedHas ty c) => Proxy c -> TypedArchetype ty -> ComponentId c -> IO (Backend c)
-getColumnWithId p (TypedArchetype aty) compId = lookupComponent p aty compId
-  (\col -> getColumn p aty col)
+getColumnWithId :: forall c ty . (Component c, TypedHas ty c) => TypedArchetype ty -> ComponentId c -> IO (Backend c)
+getColumnWithId (TypedArchetype aty) compId = lookupComponent aty compId
+  (\col -> getColumn (Proxy @c) aty col)
   (error "Hecs.Filter.Internal:getColumn Component that was on the type level wasn't on the value level")
 {-# INLINE getColumnWithId #-}
 

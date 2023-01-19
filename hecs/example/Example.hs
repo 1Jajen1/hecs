@@ -1,5 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 module Main (main) where
 
 import Data.Int
@@ -52,13 +53,14 @@ main = do
       -- liftIO $ print $ sizeOf (undefined @_ @Position)
       -- liftIO $ print $ alignment (undefined @_ @Position)
       pure ()
-    Hecs.filter (filterDSL @World @'[Int, Or Boxed Position])
+    Hecs.filter (filterDSL @'[Int, Or Boxed Position])
       (\aty _ -> do
-        x <- getColumn @World @Int aty
+        x <- getColumn @Int aty
         es <- getEntityColumn aty
         iterateArchetype aty $ \n e -> do
           liftIO $ print e
-          readStored x n >>= liftIO . print 
+          readColumn x n >>= liftIO . print 
+        pure ()
           )
       (pure ())
     getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print

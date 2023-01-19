@@ -42,17 +42,6 @@ data WorldImpl (preAllocatedEIds :: Nat) = WorldImpl {
 , isDeferred        :: !Bool -- TODO Experiment with this on the type level
 }
 
--- TODO
-
-{- Commands:
-
-CreateEntity
-AddComponent
-SetComponent
-RemoveComponent
-FreeEntity
-
--}
 
 -- TODO This is temporary and not very efficient yet
 data Command =
@@ -141,7 +130,7 @@ instance KnownNat n => WorldClass (WorldImpl n) where
   getComponentI :: forall c r . Component c => WorldImpl n -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
   getComponentI WorldImpl{entityIndexRef} eid compId s f = do
     readIORef entityIndexRef >>= (\case
-      Just (ArchetypeRecord row aty) -> Archetype.lookupComponent (Proxy @c) aty compId (Archetype.readComponent aty row >=> s) f
+      Just (ArchetypeRecord row aty) -> Archetype.lookupComponent aty compId (Archetype.readComponent aty row >=> s) f
       Nothing -> f) . IM.lookup (coerce eid)
   {-# INLINE getComponentI #-}
   -- TODO Check if ghc removes the filter entirely
@@ -180,13 +169,13 @@ syncSetComponent WorldImpl{..} eid compId comp = do
   eIndex <- readIORef entityIndexRef
   let ArchetypeRecord row aty = IM.findWithDefault (error "Hecs.World.Internal:setComponentI entity id not in entity index!") (coerce eid) eIndex
   -- Check if we have that component, if yes, write it, if no, move the entity
-  Archetype.lookupComponent (Proxy @c) aty compId
+  Archetype.lookupComponent aty compId
     (\c -> do
       -- putStrLn "Write only"
       Archetype.writeComponent aty row c comp)
     $ Archetype.getEdge aty compId >>= \case
       -- We have an edge! Move the entity and write the component there
-      ArchetypeEdge (Just dstAty) _ -> Archetype.lookupComponent (Proxy @c) dstAty compId
+      ArchetypeEdge (Just dstAty) _ -> Archetype.lookupComponent dstAty compId
         (\c -> do
           (newRow, movedEid) <- Archetype.moveEntity aty row c dstAty
           -- putStrLn "Cheap move (edge)" 
@@ -198,7 +187,7 @@ syncSetComponent WorldImpl{..} eid compId comp = do
         (error "Hecs.World.Internal:setComponentI edge destination did not have component")
       -- We don't have an edge, but the archetype may exist, so check the archetype index first
       ArchetypeEdge Nothing _ -> do -- remove edge should be empty!
-        (newTy, newColumn) <- Archetype.addComponentType (Proxy @c) (Archetype.getTy aty) compId
+        (newTy, newColumn) <- Archetype.addComponentType (Archetype.getTy aty) compId
 
         archetypeIndex <- readIORef archetypeIndexRef
         dstAty <- HTB.lookup archetypeIndex newTy (\dstAty -> do
@@ -224,7 +213,6 @@ syncSetComponent WorldImpl{..} eid compId comp = do
               HTB.insert ind (coerce tyId) arr) (pure componentIndex)
             writeIORef componentIndexRef compIndex
 
-            -- TODO I cannot use w { ... } here because of componentIndex
             pure dstAty
 
         -- now move the entity and its current data between the two
@@ -244,7 +232,7 @@ syncDestroyEntity WorldImpl{..} eid = do
 
 -- A mapping from World -> ComponentId. A ComponentId from one World is not valid in another
 class Component c => Has w c where
-  getComponentId :: proxy w -> proxy c -> ComponentId c
+  getComponentId :: proxy w -> ComponentId c
 
 -- All behavior a World has to support. makeWorld creates a newtype around WorldImpl and derives this
 class WorldClass w where

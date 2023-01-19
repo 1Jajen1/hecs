@@ -13,6 +13,8 @@ import Hecs.Entity.Internal
 import Hecs.Component
 
 import Data.Proxy
+import Hecs.Filter
+import Control.Monad.Base
 
 makeWorld :: String -> [Name] -> Q [Dec]
 makeWorld wN names = do
@@ -24,7 +26,7 @@ makeWorld wN names = do
       mkHasInstance :: Int -> Name -> Q [Dec]
       mkHasInstance eid name = [d|
           instance {-# OVERLAPS #-} Has $wCon $cCon where
-            getComponentId _ _ = ComponentId $ EntityId eid
+            getComponentId _ = ComponentId $ EntityId eid
             {-# INLINE getComponentId #-}
           {-# SPECIALISE syncSetComponent :: WorldImpl $natTy -> EntityId -> ComponentId $cCon -> $cCon -> IO () #-}
         |]
@@ -34,9 +36,26 @@ makeWorld wN names = do
       deriving newtype instance WorldClass $wCon
 
       instance (Has $wCon l, Has $wCon r) => Has $wCon (Rel l r) where
-        getComponentId _ _ = mkRelation (getComponentId (Proxy @($wCon)) (Proxy @l)) (getComponentId (Proxy @($wCon)) (Proxy @r))
+        getComponentId _ = mkRelation (getComponentId (Proxy @($wCon))) (getComponentId (Proxy @($wCon)))
         {-# INLINE getComponentId #-}
     |]
-  pure $ wldDec : compInstances ++ otherInstances
+  specializedApi <- [d|
+      getComponentId :: Has $wCon c => ComponentId c
+      getComponentId = Hecs.World.Internal.getComponentId (Proxy @($wCon))
+      {-# INLINE getComponentId #-}
+
+      component :: forall c . Has $wCon c => Filter c HasMainId
+      component = Hecs.Filter.component (Proxy @($wCon))
+      {-# INLINE component #-}
+
+      filterDSL :: forall xs . FilterDSL $wCon (FilterFromList xs) => Filter (FilterFromList xs) (HasMain (FilterFromList xs))
+      filterDSL = Hecs.Filter.filterDSL @($wCon) @xs
+      {-# INLINE filterDSL #-}
+
+      getColumn :: forall c ty m . (Has $wCon c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> m (Backend c)
+      getColumn ty = Hecs.Filter.getColumn @c @($wCon) @ty @m ty
+      {-# INLINE getColumn #-}
+    |]
+  pure $ wldDec : compInstances ++ otherInstances ++ specializedApi
   where
     preAllocComps = fromIntegral $ length names
