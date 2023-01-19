@@ -15,6 +15,7 @@ import Control.Monad.Trans.Control
 import Control.Monad.Base
 import Hecs.Filter
 import Control.Monad.Trans.Class
+import Data.Coerce
 
 newtype HecsM w m a = HecsM { unHecsM :: ReaderT w m a }
   deriving newtype (Functor, Applicative, Monad, MonadIO, MonadTrans, MonadBase b, MonadBaseControl b)  
@@ -38,7 +39,7 @@ instance (MonadBaseControl IO m, Core.WorldClass w) => MonadHecs w (HecsM w m) w
   {-# INLINE setComponentWithId #-}
   getComponentWithId eid compId s (HecsM f) = HecsM $ ask >>= \w -> do
     st <- liftBaseWith $ \runInBase -> Core.getComponentWithId w eid compId
-      (runInBase . unHecsM . s)
+      (runInBase . unHecsM . s . coerce)
       (runInBase f)
     restoreM st
   {-# INLINE getComponentWithId #-}

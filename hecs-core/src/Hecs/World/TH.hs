@@ -8,9 +8,8 @@ import Language.Haskell.TH
 
 import Hecs.World.Internal
 import Hecs.Component.Internal
+import Hecs.Component.Relation
 import Hecs.Entity.Internal
-
-import Hecs.Component
 
 import Data.Proxy
 import Hecs.Filter
@@ -25,13 +24,28 @@ makeWorld wN names = do
       natTy = pure . LitT $ NumTyLit preAllocComps
       mkHasInstance :: Int -> Name -> Q [Dec]
       mkHasInstance eid name = [d|
-          instance {-# OVERLAPS #-} Has $wCon $cCon where
+          instance Has $wCon $cCon where
             getComponentId _ = ComponentId $ EntityId eid
             {-# INLINE getComponentId #-}
-          {-# SPECIALISE syncSetComponent :: WorldImpl $natTy -> EntityId -> ComponentId $cCon -> $cCon -> IO () #-}
+          {-# SPECIALISE syncSetComponent :: WorldImpl $natTy -> EntityId -> ComponentId $cCon -> Store $cCon -> IO () #-}
         |]
         where cCon = pure $ ConT name
-  compInstances <- foldr (\(i, n) acc -> acc >>= \xs -> mkHasInstance i n >>= \ys -> pure $ ys ++ xs) (pure []) $ zip [1..] names
+      processName eid name = do
+        reify name >>= \case
+          DataConI{} -> [d|
+              instance Component $(conT name) where
+                type Backend $(conT name) = TagBackend
+                type Store $(conT name) = ()
+                backing _ _ _ t = t
+                {-# INLINE backing #-}
+              instance Has $wCon $(conT name) where
+                getComponentId _ = ComponentId $ EntityId eid
+                {-# INLINE getComponentId #-}
+              {-# SPECIALISE syncSetComponent :: WorldImpl $natTy -> EntityId -> ComponentId $(conT name) -> Store $(conT name) -> IO () #-}
+            |]
+          TyConI{} -> mkHasInstance eid name
+          _ -> error "TODO"
+  compInstances <- foldr (\(i, n) acc -> acc >>= \xs -> processName i n >>= \ys -> pure $ ys ++ xs) (pure []) $ zip [1..] names
   otherInstances <- [d|
       deriving newtype instance WorldClass $wCon
 

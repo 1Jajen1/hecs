@@ -15,7 +15,6 @@ module Hecs.Component (
 , ViaTag(..)
 , IsTag
 , Rel(..)
-, mkRelation
 , Tag
 ) where
 
@@ -35,10 +34,10 @@ instance Component (ViaBoxed a) where
 data Tag
   deriving Component via (ViaTag Tag)
 
-newtype ViaTag a = ViaTag a
+newtype ViaTag a = ViaTag a 
 
 instance Component (ViaTag a) where
   type Backend (ViaTag a) = TagBackend
-  type Store (ViaTag a) = a
+  type Store (ViaTag a) = ()
   backing _ _ _ t = t
   {-# INLINE backing #-}

@@ -212,11 +212,11 @@ empty = do
                         #)
 
 -- Note: This performs no bounds checks. At this point we should have already checked if that entity and the component is in this table!
-readComponent :: forall a . Component a => Archetype -> Int -> Int -> IO a
-readComponent = backing (Proxy @a)
+readComponent :: forall a . Component a => Proxy a -> Archetype -> Int -> Int -> IO (Store a)
+readComponent p = backing p
   readBoxedComponent
-  (\a r c -> coerce $ readStorableComponent @(Store a) a r c)
-  (error "Hecs.Archetype.Internal:readComponent Tag placeholder. Do not evaluate tags")
+  readStorableComponent
+  (\_ _ _ -> pure $ error "Hecs.Archetype.Internal:readComponent Tag placeholder. Do not evaluate tags")
 {-# INLINE readComponent #-}
 
 readStorableComponent :: Storable a => Archetype -> Int -> Int -> IO a
@@ -233,10 +233,10 @@ readBoxedComponent Archetype{columns = Columns# _ _ arrs _ _} (I# row) (I# colum
       (# s'', a #) -> (# s'', unsafeCoerce a #)
 {-# INLINE readBoxedComponent #-}
 
-writeComponent :: forall a . Component a => Archetype -> Int -> Int -> a -> IO ()
-writeComponent = backing (Proxy @a)
+writeComponent :: forall a . Component a => Proxy a -> Archetype -> Int -> Int -> Store a -> IO ()
+writeComponent p = backing p
   writeBoxedComponent
-  (\a r c el -> writeStorableComponent @(Store a) a r c (coerce el))
+  writeStorableComponent
   (\_ _ _ _ -> pure ()) -- TODO Is this fine? Probably, allows me to reuse this without any duplication
 {-# INLINE writeComponent #-}
 

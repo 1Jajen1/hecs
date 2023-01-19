@@ -85,6 +85,8 @@ not (WithMain m f) = NotFilter m $ Prelude.not . f
 not (NotFilter m f) = WithMain m $ Prelude.not . f
 {-# INLINE not #-}
 
+data Wrap (c :: k) 
+
 -- TODO 
 -- This has a small inefficiency: The main component id is guaranteed to be there, so no point in rechecking
 -- but since we don't know who or what the main id is, we have no choice here
@@ -96,7 +98,7 @@ newtype TypedArchetype ty = TypedArchetype Archetype
 
 getColumnWithId :: forall c ty . (Component c, TypedHas ty c) => TypedArchetype ty -> ComponentId c -> IO (Backend c)
 getColumnWithId (TypedArchetype aty) compId = lookupComponent aty compId
-  (\col -> getColumn (Proxy @c) aty col)
+  (getColumn (Proxy @c) aty)
   (error "Hecs.Filter.Internal:getColumn Component that was on the type level wasn't on the value level")
 {-# INLINE getColumnWithId #-}
 
@@ -115,10 +117,12 @@ iterateArchetype (TypedArchetype (Archetype{columns = Columns# szRef eidsRef _ _
       | otherwise = case readIntArray# arr n s of (# s1, eid #) -> case f (I# n) (EntityId (I# eid)) b of IO g -> case g s1 of (# s2, st #) -> go arr sz (n +# 1#) st s2
 {-# INLINE iterateArchetype #-}
 
-type family TypedHas ty (c :: Type) :: Constraint where
-  TypedHas ty c = If (TypedHasBool ty c) (() :: Constraint) (TypeError ('Text "No type level evidence that this archetype has a component typed: " :<>: ShowType c :$$: Text "You may want to use an unsafe access method"))
+type TypedHas :: k -> l -> Constraint
+type family TypedHas ty c :: Constraint where
+  TypedHas ty c = If (TypedHasBool ty c) (() :: Constraint) (TypeError ('Text "No type level evidence that this archetype has a component typed: " :<>: ShowType c :$$: Text "Type level evidence " :<>: ShowType ty :$$: Text "You may want to use an unsafe access method"))
 
-type family TypedHasBool ty (c :: Type) :: Bool where
+type TypedHasBool :: k -> l -> Bool
+type family TypedHasBool ty c :: Bool where
   TypedHasBool (And l r) c = TypedHasBool l c || TypedHasBool r c
   TypedHasBool (Or l r) c = False -- This is a bit annoying, but if we have an Or, we cannot conclusively say we have a component
   TypedHasBool (Not l) c = Data.Type.Bool.Not (TypedHasBool l c)

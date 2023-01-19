@@ -1,6 +1,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE PolyKinds #-}
 module Hecs.Filter (
   Filter
 , FilterContext(HasMainId)
@@ -40,7 +41,7 @@ component w = componentWithId $ getComponentId w
 {-# INLINE component #-}
 
 getColumn :: forall c w ty m . (Has w c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> m (Backend c)
-getColumn aty = getColumnWithId @c aty (getComponentId @_ @c (Proxy @w))
+getColumn aty = getColumnWithId @c aty (getComponentId @_ @_ @c (Proxy @w))
 {-# INLINE getColumn #-}
 
 getColumnWithId :: forall c ty m . (Component c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> ComponentId c -> m (Backend c)
@@ -57,22 +58,24 @@ getEntityColumn :: MonadBase IO m => TypedArchetype ty -> m (StorableBackend Ent
 getEntityColumn ty = liftBase $ Hecs.Filter.Internal.getEntityColumn ty
 {-# INLINE getEntityColumn #-}
 
+type FilterFromList :: [k] -> k
 type family FilterFromList xs where
   FilterFromList (x:y:ys) = And x (FilterFromList (y:ys))
   FilterFromList '[x] = x
   FilterFromList '[] = TypeError ('Text "Cannot create an empty filter (yet)") -- TODO Empty filters could work?
 
+type HasMain :: k -> FilterContext
 type family HasMain ty :: FilterContext where
   HasMain (And l r) = CombineCtx (HasMain l) (HasMain r)
   HasMain (Or l r) = CombineCtx (HasMain l) (HasMain r)
   HasMain (Not a) = InvertCtx (HasMain a)
   HasMain _ = HasMainId
 
-filterDSL :: forall (w :: Type) xs . FilterDSL w (FilterFromList xs) => Filter (FilterFromList xs) (HasMain (FilterFromList xs))
+filterDSL :: forall {k} (w :: Type) (xs :: [k]) . FilterDSL w (FilterFromList xs) => Filter (FilterFromList xs) (HasMain (FilterFromList xs))
 filterDSL = filterDSLI (Proxy @w) (Proxy @(FilterFromList xs))
 {-# INLINE filterDSL #-}
 
-class FilterDSL w ty where
+class FilterDSL (w :: Type) (ty :: k) where
   filterDSLI :: Proxy w -> Proxy ty -> Filter ty (HasMain ty)
 
 instance {-# OVERLAPPING #-} FilterDSL w f => FilterDSL w (Not f) where

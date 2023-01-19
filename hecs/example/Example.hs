@@ -1,13 +1,14 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
-module Main (main) where
+{-# LANGUAGE TypeFamilies #-}
+module Main where
 
 import Data.Int
 
 import Control.Monad.IO.Class
 
-import Hecs as Hecs
+import Hecs
 
 import GHC.Generics
 import Foreign.Storable
@@ -21,10 +22,20 @@ data Test
   deriving stock Generic
   deriving Component via (ViaTag Test)
 
-data Boxed = Boxed Int
+newtype Boxed = Boxed Int
   deriving Component via (ViaBoxed Boxed)
 
-makeWorld "World" [''Int, ''Int8, ''Position, ''Test, ''Boxed]
+data Color = Red | Green | Blue
+  deriving Component via (ViaTag Color)
+
+makeWorld "World" [
+    ''Int
+  , ''Int8
+  , ''Position
+  , ''Test
+  , ''Boxed
+  , ''Color, 'Red, 'Green, 'Blue
+  ]
 
 main :: IO ()
 main = do
@@ -43,6 +54,7 @@ main = do
     liftIO $ putStrLn "Set tag!"
     setComponent @Int e2 100
     setComponent @Position e2 (Pos 10 20 0)
+    setTag @Red e2
     void . replicateM 1000 $ do
       car <- newEntity
       -- liftIO $ print car
@@ -65,4 +77,5 @@ main = do
       (pure ())
     getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
     getComponent @Int e2 (pure . Just) (pure Nothing) >>= liftIO . print
+    hasTag @Red e2 >>= liftIO . print
   putStrLn "Done"

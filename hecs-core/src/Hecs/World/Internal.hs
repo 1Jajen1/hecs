@@ -1,6 +1,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE UnboxedTuples #-}
+{-# LANGUAGE TypeFamilies #-}
 module Hecs.World.Internal (
   WorldImpl(..)
 , WorldClass(..)
@@ -46,7 +47,7 @@ data WorldImpl (preAllocatedEIds :: Nat) = WorldImpl {
 -- TODO This is temporary and not very efficient yet
 data Command =
     CreateEntity !EntityId
-  | forall c . Component c => SetComponent !EntityId !(ComponentId c) c
+  | forall c . Component c => SetComponent !EntityId !(ComponentId c) (Store c)
   | DestroyEntity !EntityId
 
 
@@ -122,15 +123,15 @@ instance KnownNat n => WorldClass (WorldImpl n) where
     then modifyMVar_ deferredOpsRef (`Arr.writeBack` DestroyEntity eid) -- TODO Strictness
     else syncDestroyEntity w eid
   {-# INLINE deAllocateEntity #-}
-  setComponentI :: forall c . Component c => WorldImpl n -> EntityId -> ComponentId c -> c -> IO ()
+  setComponentI :: forall c . (Component c) => WorldImpl n -> EntityId -> ComponentId c -> Store c -> IO ()
   setComponentI w@WorldImpl{..} eid compId comp = if isDeferred
     then modifyMVar_ deferredOpsRef (`Arr.writeBack` SetComponent eid compId comp) -- TODO Strictness
     else syncSetComponent w eid compId comp
   {-# INLINE setComponentI #-}
-  getComponentI :: forall c r . Component c => WorldImpl n -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
+  getComponentI :: forall c r . Component c => WorldImpl n -> EntityId -> ComponentId c -> (Store c -> IO r) -> IO r -> IO r
   getComponentI WorldImpl{entityIndexRef} eid compId s f = do
     readIORef entityIndexRef >>= (\case
-      Just (ArchetypeRecord row aty) -> Archetype.lookupComponent aty compId (Archetype.readComponent aty row >=> s) f
+      Just (ArchetypeRecord row aty) -> Archetype.lookupComponent aty compId (Archetype.readComponent (Proxy @c) aty row >=> s) f
       Nothing -> f) . IM.lookup (coerce eid)
   {-# INLINE getComponentI #-}
   -- TODO Check if ghc removes the filter entirely
@@ -164,7 +165,7 @@ syncAllocateEntity WorldImpl{..} eid = do
   row <- Archetype.addEntity emptyArchetype eid
   modifyIORef' entityIndexRef $ IM.insert (coerce eid) (ArchetypeRecord row emptyArchetype)
 
-syncSetComponent :: forall c n . Component c => WorldImpl n -> EntityId -> ComponentId c -> c -> IO ()
+syncSetComponent :: forall c n . Component c => WorldImpl n -> EntityId -> ComponentId c -> Store c -> IO ()
 syncSetComponent WorldImpl{..} eid compId comp = do
   eIndex <- readIORef entityIndexRef
   let ArchetypeRecord row aty = IM.findWithDefault (error "Hecs.World.Internal:setComponentI entity id not in entity index!") (coerce eid) eIndex
@@ -172,7 +173,7 @@ syncSetComponent WorldImpl{..} eid compId comp = do
   Archetype.lookupComponent aty compId
     (\c -> do
       -- putStrLn "Write only"
-      Archetype.writeComponent aty row c comp)
+      Archetype.writeComponent (Proxy @c) aty row c comp)
     $ Archetype.getEdge aty compId >>= \case
       -- We have an edge! Move the entity and write the component there
       ArchetypeEdge (Just dstAty) _ -> Archetype.lookupComponent dstAty compId
@@ -180,7 +181,7 @@ syncSetComponent WorldImpl{..} eid compId comp = do
           (newRow, movedEid) <- Archetype.moveEntity aty row c dstAty
           -- putStrLn "Cheap move (edge)" 
 
-          Archetype.writeComponent dstAty newRow c comp
+          Archetype.writeComponent (Proxy @c) dstAty newRow c comp
 
           -- Important insert the moved first in case it is ourselves so that we overwrite it after
           writeIORef entityIndexRef $! IM.insert (coerce eid) (ArchetypeRecord newRow dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row aty) eIndex)
@@ -219,7 +220,7 @@ syncSetComponent WorldImpl{..} eid compId comp = do
         (newRow, movedEid) <- Archetype.moveEntity aty row newColumn dstAty
 
         -- and finally write the component
-        Archetype.writeComponent dstAty newRow newColumn comp
+        Archetype.writeComponent (Proxy @c) dstAty newRow newColumn comp
 
         -- Important insert the moved first in case it is ourselves so that we overwrite it after
         writeIORef entityIndexRef $! IM.insert (coerce eid) (ArchetypeRecord newRow dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row aty) eIndex
@@ -231,7 +232,7 @@ syncDestroyEntity WorldImpl{..} eid = do
   -- TODO Actually remove the entity everywhere
 
 -- A mapping from World -> ComponentId. A ComponentId from one World is not valid in another
-class Component c => Has w c where
+class Component c => Has w (c :: k) where
   getComponentId :: proxy w -> ComponentId c
 
 -- All behavior a World has to support. makeWorld creates a newtype around WorldImpl and derives this
@@ -239,8 +240,8 @@ class WorldClass w where
   new :: IO w
   allocateEntity :: w -> IO EntityId
   deAllocateEntity :: w -> EntityId -> IO ()
-  setComponentI :: Component c => w -> EntityId -> ComponentId c -> c -> IO ()
-  getComponentI :: Component c => w -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
+  setComponentI :: Component c => w -> EntityId -> ComponentId c -> Store c -> IO ()
+  getComponentI :: Component c => w -> EntityId -> ComponentId c -> (Store c -> IO r) -> IO r -> IO r
   filterI :: w -> Filter ty Filter.HasMainId -> (Filter.TypedArchetype ty -> b -> IO b) -> IO b -> IO b
   defer :: w -> (w -> IO a) -> IO a
   sync :: w -> IO ()

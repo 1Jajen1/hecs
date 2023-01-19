@@ -22,7 +22,7 @@ newtype GenericFlat a = GenericFlat a
 instance (Generic a, GSizeOf (Rep a), GAlignment (Rep a), GPoke (Rep a), GPeek (Rep a)) => Component (GenericFlat a) where
   type Backend (GenericFlat a) = StorableBackend (GenericFlat a)
   type Store (GenericFlat a) = GenericFlat a
-  backing _ _ flat _ = flat 
+  backing _ _ flat _ = flat
   {-# INLINE backing #-}
 
 instance (Generic a, GSizeOf (Rep a), GAlignment (Rep a), GPoke (Rep a), GPeek (Rep a)) => Storable (GenericFlat a) where

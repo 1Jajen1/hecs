@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 module Hecs.World (
   newWorld
 , Has
@@ -29,21 +30,21 @@ import Control.Monad.Trans.Control
 newWorld :: (WorldClass w, MonadBase IO m) => m w
 newWorld = liftBase new
 
-getComponent :: forall c w r m . (WorldClass w, Has w c, MonadBaseControl IO m) => w -> EntityId -> (c -> m r) -> m r -> m r
-getComponent w eid = getComponentWithId w eid (getComponentId (Proxy @w))
+getComponent :: forall c w r m . (WorldClass w, Has w c, MonadBaseControl IO m) => w -> EntityId -> (Store c -> m r) -> m r -> m r
+getComponent w eid = getComponentWithId w eid (getComponentId @_ @_ @c (Proxy @w))
 {-# INLINE getComponent #-}
 
-getComponentWithId :: forall c w r m . (WorldClass w, Component c, MonadBaseControl IO m) => w -> EntityId -> ComponentId c -> (c -> m r) -> m r -> m r
+getComponentWithId :: forall c w r m . (WorldClass w, Component c, MonadBaseControl IO m) => w -> EntityId -> ComponentId c -> (Store c -> m r) -> m r -> m r
 getComponentWithId w eid cid s f = do
   st <- liftBaseWith $ \runInBase -> getComponentI w eid cid (runInBase . s) (runInBase f)
   restoreM st 
 {-# INLINE getComponentWithId #-}
 
-setComponent :: forall c w m . (WorldClass w, Has w c, MonadBase IO m) => w -> EntityId -> c -> m ()
-setComponent w eid = setComponentWithId w eid (getComponentId (Proxy @w))
+setComponent :: forall c w m . (WorldClass w, Has w c, MonadBase IO m) => w -> EntityId -> Store c -> m ()
+setComponent w eid = setComponentWithId w eid (getComponentId @_ @_ @c (Proxy @w))
 {-# INLINE setComponent #-}
 
-setComponentWithId :: forall c w m . (WorldClass w, Component c, MonadBase IO m) => w -> EntityId -> ComponentId c -> c -> m ()
+setComponentWithId :: forall c w m . (WorldClass w, Component c, MonadBase IO m) => w -> EntityId -> ComponentId c -> Store c -> m ()
 setComponentWithId w eid cid c = liftBase $ setComponentI w eid cid c
 {-# INLINE setComponentWithId #-}
 
