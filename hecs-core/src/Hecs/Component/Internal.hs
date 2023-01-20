@@ -2,6 +2,7 @@
 {-# LANGUAGE RoleAnnotations #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE MagicHash #-}
+{-# LANGUAGE UnboxedTuples #-}
 module Hecs.Component.Internal (
   ComponentId(..)
 , Component(..)
@@ -9,6 +10,7 @@ module Hecs.Component.Internal (
 , Column(..)
 , ViaBox(..)
 , ViaFlat(..)
+, AccessColumn(..)
 ) where
 
 import Hecs.Entity.Internal
@@ -19,6 +21,8 @@ import Hecs.HashTable.HashKey
 import Data.Kind
 import Data.Int
 import Data.Word
+import GHC.IO (IO(IO))
+import Control.Monad.Base
 
 newtype ComponentId (c :: k) = ComponentId EntityId
   deriving newtype (Eq, Show, HashKey)
@@ -33,6 +37,22 @@ class Coercible (Value c) c => Component c where
 data family Column (ty :: ComponentType) c
 data instance Column Boxed c = ColumnBoxed (MutableArray# RealWorld c)
 data instance Column Flat  c = ColumnFlat  (MutableByteArray# RealWorld)
+
+class AccessColumn (ty :: ComponentType) c where
+  readColumn :: MonadBase IO m => Column ty c -> Int -> m c
+  writeColumn :: MonadBase IO m => Column ty c -> Int -> c -> m ()
+
+instance AccessColumn Boxed c where
+  readColumn (ColumnBoxed arr) (I# n) = liftBase $ IO (readArray# arr n)
+  {-# INLINE readColumn #-}
+  writeColumn (ColumnBoxed arr) (I# n) el = liftBase $ IO $ \s -> case writeArray# arr n el s of s1 -> (# s1, () #)
+  {-# INLINE writeColumn #-}
+
+instance Storable c => AccessColumn Flat c where
+  readColumn (ColumnFlat arr) n = liftBase $ peekElemOff (Ptr (mutableByteArrayContents# arr)) n
+  {-# INLINE readColumn #-}
+  writeColumn (ColumnFlat arr) n el = liftBase $ pokeElemOff (Ptr (mutableByteArrayContents# arr)) n el
+  {-# INLINE writeColumn #-}
 
 newtype ViaBox a = ViaBox a
 
