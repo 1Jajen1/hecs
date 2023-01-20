@@ -30,6 +30,7 @@ import GHC.Exts (Any)
 import Data.IORef
 import Control.Concurrent.MVar
 import Data.Bits
+import Data.Kind
 
 -- This is going to be wrapped by 'makeWorld "World" [''Comp1, ''Comp2, ...]' which enables
 -- making some component ids static. The componentMap is then only used for unknown/dynamic components
@@ -43,11 +44,12 @@ data WorldImpl (preAllocatedEIds :: Nat) = WorldImpl {
 , isDeferred        :: !Bool -- TODO Experiment with this on the type level
 }
 
-
 -- TODO This is temporary and not very efficient yet
 data Command =
     CreateEntity !EntityId
-  | forall c . Component c => SetComponent !EntityId !(ComponentId c) (Store c)
+  | forall c .                AddTag       !EntityId !(ComponentId c)
+  | forall c . Component c => AddComponent !EntityId !(ComponentId c)
+  | forall c . Component c => SetComponent !EntityId !(ComponentId c) c
   | DestroyEntity !EntityId
 
 
@@ -123,17 +125,30 @@ instance KnownNat n => WorldClass (WorldImpl n) where
     then modifyMVar_ deferredOpsRef (`Arr.writeBack` DestroyEntity eid) -- TODO Strictness
     else syncDestroyEntity w eid
   {-# INLINE deAllocateEntity #-}
-  setComponentI :: forall c . (Component c) => WorldImpl n -> EntityId -> ComponentId c -> Store c -> IO ()
+  addTagI w@WorldImpl{..} eid compId = if isDeferred
+    then modifyMVar_ deferredOpsRef (`Arr.writeBack` AddTag eid compId) -- TODO Strictness
+    else syncAddTag w eid compId
+  {-# INLINE addTagI #-}
+  addComponentI w@WorldImpl{..} eid compId = if isDeferred
+    then modifyMVar_ deferredOpsRef (`Arr.writeBack` AddComponent eid compId) -- TODO Strictness
+    else syncAddComponent w eid compId
+  {-# INLINE addComponentI #-}
   setComponentI w@WorldImpl{..} eid compId comp = if isDeferred
     then modifyMVar_ deferredOpsRef (`Arr.writeBack` SetComponent eid compId comp) -- TODO Strictness
     else syncSetComponent w eid compId comp
   {-# INLINE setComponentI #-}
-  getComponentI :: forall c r . Component c => WorldImpl n -> EntityId -> ComponentId c -> (Store c -> IO r) -> IO r -> IO r
+  getComponentI :: forall c r . Component c => WorldImpl n -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
   getComponentI WorldImpl{entityIndexRef} eid compId s f = do
     readIORef entityIndexRef >>= (\case
       Just (ArchetypeRecord row aty) -> Archetype.lookupComponent aty compId (Archetype.readComponent (Proxy @c) aty row >=> s) f
       Nothing -> f) . IM.lookup (coerce eid)
   {-# INLINE getComponentI #-}
+  hasTagI :: forall c . WorldImpl n -> EntityId -> ComponentId c -> IO Bool
+  hasTagI WorldImpl{entityIndexRef} eid compId = do
+    readIORef entityIndexRef >>= (\case
+      Just (ArchetypeRecord _ aty) -> Archetype.hasTag aty compId (const $ pure True) (pure False)
+      Nothing -> pure False) . IM.lookup (coerce eid)
+  {-# INLINE hasTagI #-}
   -- TODO Check if ghc removes the filter entirely
   filterI WorldImpl{componentIndexRef} fi f z = readIORef componentIndexRef >>= \componentIndex -> HTB.lookup componentIndex (Filter.extractMainId fi)
     (\arr ->
@@ -156,6 +171,8 @@ instance KnownNat n => WorldClass (WorldImpl n) where
         | otherwise = do
           Arr.read arr n >>= \case
             CreateEntity e -> syncAllocateEntity w e
+            AddTag e cId -> syncAddTag w e cId
+            AddComponent e cId -> syncAddComponent w e cId
             SetComponent e cId c -> syncSetComponent w e cId c
             DestroyEntity e -> syncDestroyEntity w e
           go arr (n + 1)
@@ -165,65 +182,85 @@ syncAllocateEntity WorldImpl{..} eid = do
   row <- Archetype.addEntity emptyArchetype eid
   modifyIORef' entityIndexRef $ IM.insert (coerce eid) (ArchetypeRecord row emptyArchetype)
 
-syncSetComponent :: forall c n . Component c => WorldImpl n -> EntityId -> ComponentId c -> Store c -> IO ()
-syncSetComponent WorldImpl{..} eid compId comp = do
+syncAdd ::
+     (Archetype -> ArchetypeTy -> Int -> IO Archetype)
+  -> (ArchetypeTy -> IO (ArchetypeTy, Int))
+  -> (forall a . Archetype -> (Int -> IO a) -> IO a -> IO a)
+  -> WorldImpl n -> EntityId -> ComponentId c -> IO (Archetype, Int, Int)
+syncAdd newArchetype addToType lookupCol WorldImpl{..} eid compId = do
   eIndex <- readIORef entityIndexRef
   let ArchetypeRecord row aty = IM.findWithDefault (error "Hecs.World.Internal:setComponentI entity id not in entity index!") (coerce eid) eIndex
   -- Check if we have that component, if yes, write it, if no, move the entity
-  Archetype.lookupComponent aty compId
-    (\c -> do
-      -- putStrLn "Write only"
-      Archetype.writeComponent (Proxy @c) aty row c comp)
-    $ Archetype.getEdge aty compId >>= \case
-      -- We have an edge! Move the entity and write the component there
-      ArchetypeEdge (Just dstAty) _ -> Archetype.lookupComponent dstAty compId
-        (\c -> do
-          (newRow, movedEid) <- Archetype.moveEntity aty row c dstAty
-          -- putStrLn "Cheap move (edge)" 
+  lookupCol aty (\c -> pure (aty, row, c)) $ Archetype.getEdge aty compId >>= \case
+    ArchetypeEdge (Just dstAty) _ -> lookupCol dstAty (\c -> do
+      (newRow, movedEid) <- Archetype.moveEntity aty row c dstAty
+      -- Important insert the moved first in case it is ourselves so that we overwrite it after
+      writeIORef entityIndexRef $! IM.insert (coerce eid) (ArchetypeRecord newRow dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row aty) eIndex
+      pure (dstAty, newRow, c)
+      )
+      (error "Hecs.World.Internal:setComponentI edge destination did not have component")
+    ArchetypeEdge Nothing _ -> do
+      (newTy, newColumn) <- addToType (Archetype.getTy aty)
 
-          Archetype.writeComponent (Proxy @c) dstAty newRow c comp
+      archetypeIndex <- readIORef archetypeIndexRef
+      dstAty <- HTB.lookup archetypeIndex newTy (\dstAty -> do
+          -- putStrLn "Cheap move (no edge)" 
+          Archetype.setEdge aty compId (ArchetypeEdge (Just dstAty) Nothing)
+          pure dstAty
+        ) $ do
+          -- putStrLn "Expensive move" 
+          dstAty <- newArchetype aty newTy newColumn
 
-          -- Important insert the moved first in case it is ourselves so that we overwrite it after
-          writeIORef entityIndexRef $! IM.insert (coerce eid) (ArchetypeRecord newRow dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row aty) eIndex)
-        (error "Hecs.World.Internal:setComponentI edge destination did not have component")
-      -- We don't have an edge, but the archetype may exist, so check the archetype index first
-      ArchetypeEdge Nothing _ -> do -- remove edge should be empty!
-        (newTy, newColumn) <- Archetype.addComponentType (Archetype.getTy aty) compId
+          Archetype.setEdge aty compId (ArchetypeEdge (Just dstAty) Nothing)
+          !newArchetypeIndex <- HTB.insert archetypeIndex newTy dstAty
+          writeIORef archetypeIndexRef newArchetypeIndex
 
-        archetypeIndex <- readIORef archetypeIndexRef
-        dstAty <- HTB.lookup archetypeIndex newTy (\dstAty -> do
-            -- putStrLn "Cheap move (no edge)" 
-            Archetype.setEdge aty compId (ArchetypeEdge (Just dstAty) Nothing)
-            pure dstAty
-          ) $ do
-            -- putStrLn "Expensive move" 
-            dstAty <- backing (Proxy @c)
-              (Archetype.createArchetype newTy (getColumnSizes aty))
-              (IO $ \s0 -> case Archetype.addColumnSize newColumn (sizeOf (undefined @_ @(Store c))) (getColumnSizes aty) s0 of
-                (# s1, newSzs #) -> case Archetype.createArchetype newTy newSzs of
-                  IO f -> f s1)
-              (Archetype.createArchetype newTy (getColumnSizes aty))
+          componentIndex <- readIORef componentIndexRef
+          !compIndex <- Archetype.iterateComponentIds newTy (\tyId ind -> do 
+            arr <- HTB.lookup ind (coerce tyId) (`Arr.writeBack` ArchetypeRecord newColumn dstAty) $ Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord newColumn dstAty)
+            HTB.insert ind (coerce tyId) arr) (pure componentIndex)
+          writeIORef componentIndexRef compIndex
 
-            Archetype.setEdge aty compId (ArchetypeEdge (Just dstAty) Nothing)
-            !newArchetypeIndex <- HTB.insert archetypeIndex newTy dstAty
-            writeIORef archetypeIndexRef newArchetypeIndex
+          pure dstAty
+      -- now move the entity and its current data between the two
+      (newRow, movedEid) <- Archetype.moveEntity aty row newColumn dstAty
 
-            componentIndex <- readIORef componentIndexRef
-            !compIndex <- Archetype.iterateComponentIds newTy (\tyId ind -> do 
-              arr <- HTB.lookup ind (coerce tyId) (`Arr.writeBack` ArchetypeRecord newColumn dstAty) $ Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord newColumn dstAty)
-              HTB.insert ind (coerce tyId) arr) (pure componentIndex)
-            writeIORef componentIndexRef compIndex
+      -- Important insert the moved first in case it is ourselves so that we overwrite it after
+      writeIORef entityIndexRef $! IM.insert (coerce eid) (ArchetypeRecord newRow dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row aty) eIndex
 
-            pure dstAty
+      pure (dstAty, newRow, newColumn)
+{-# INLINE syncAdd #-}
 
-        -- now move the entity and its current data between the two
-        (newRow, movedEid) <- Archetype.moveEntity aty row newColumn dstAty
+syncAddTag :: WorldImpl n -> EntityId -> ComponentId c -> IO ()
+syncAddTag w eid compId = void $ syncAdd
+  (\aty newTy _ -> Archetype.createArchetype newTy (getColumnSizes aty))
+  (`Archetype.addTagType` compId)
+  (`Archetype.hasTag` compId)
+  w eid compId
 
-        -- and finally write the component
-        Archetype.writeComponent (Proxy @c) dstAty newRow newColumn comp
+syncAddComponent :: forall c n . Component c => WorldImpl n -> EntityId -> ComponentId c -> IO ()
+syncAddComponent w eid compId = void $ syncAdd
+  (\aty newTy newColumn -> backing (Proxy @c)
+      (Archetype.createArchetype newTy (getColumnSizes aty))
+      (IO $ \s0 -> case Archetype.addColumnSize newColumn (sizeOf (undefined @_ @(Value c))) (getColumnSizes aty) s0 of
+        (# s1, newSzs #) -> case Archetype.createArchetype newTy newSzs of
+          IO f -> f s1))
+  (`Archetype.addComponentType` compId)
+  (`Archetype.lookupComponent` compId)
+  w eid compId
 
-        -- Important insert the moved first in case it is ourselves so that we overwrite it after
-        writeIORef entityIndexRef $! IM.insert (coerce eid) (ArchetypeRecord newRow dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row aty) eIndex
+syncSetComponent :: forall c n . Component c => WorldImpl n -> EntityId -> ComponentId c -> c -> IO ()
+syncSetComponent w eid compId comp = do
+  (newAty, newRow, newCol) <- syncAdd
+    (\aty newTy newColumn -> backing (Proxy @c)
+      (Archetype.createArchetype newTy (getColumnSizes aty))
+      (IO $ \s0 -> case Archetype.addColumnSize newColumn (sizeOf (undefined @_ @(Value c))) (getColumnSizes aty) s0 of
+        (# s1, newSzs #) -> case Archetype.createArchetype newTy newSzs of
+          IO f -> f s1))
+    (`Archetype.addComponentType` compId)
+    (`Archetype.lookupComponent` compId)
+    w eid compId
+  Archetype.writeComponent (Proxy @c) newAty newRow newCol comp
 {-# INLINABLE syncSetComponent #-}
 
 syncDestroyEntity :: WorldImpl n -> EntityId -> IO ()
@@ -232,16 +269,21 @@ syncDestroyEntity WorldImpl{..} eid = do
   -- TODO Actually remove the entity everywhere
 
 -- A mapping from World -> ComponentId. A ComponentId from one World is not valid in another
-class Component c => Has w (c :: k) where
-  getComponentId :: proxy w -> ComponentId c
+class Has (w :: Type) (c :: k) where
+  getComponentId :: Proxy w -> ComponentId c
 
 -- All behavior a World has to support. makeWorld creates a newtype around WorldImpl and derives this
 class WorldClass w where
   new :: IO w
   allocateEntity :: w -> IO EntityId
   deAllocateEntity :: w -> EntityId -> IO ()
-  setComponentI :: Component c => w -> EntityId -> ComponentId c -> Store c -> IO ()
-  getComponentI :: Component c => w -> EntityId -> ComponentId c -> (Store c -> IO r) -> IO r -> IO r
+  addTagI :: w -> EntityId -> ComponentId c -> IO ()
+  addComponentI :: Component c => w -> EntityId -> ComponentId c -> IO ()
+  setComponentI :: Component c => w -> EntityId -> ComponentId c -> c -> IO ()
+  getComponentI :: Component c => w -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
+  hasTagI :: w -> EntityId -> ComponentId c -> IO Bool
+  -- removeTagI :: w -> EntityId -> ComponentId c -> IO ()
+  -- removeComponentI :: Component c => w -> EntityId -> ComponentId c -> IO ()
   filterI :: w -> Filter ty Filter.HasMainId -> (Filter.TypedArchetype ty -> b -> IO b) -> IO b -> IO b
   defer :: w -> (w -> IO a) -> IO a
   sync :: w -> IO ()

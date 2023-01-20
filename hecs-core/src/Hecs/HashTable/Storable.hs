@@ -18,6 +18,8 @@ import Prelude hiding (lookup)
 import Foreign.Storable
 import GHC.Exts
 import GHC.IO
+import GHC.Generics
+import Hecs.Component.Generic (GenericFlat(..))
 
 -- Mutable linear hashtable
 -- Used internally to map Components to their ids and will probably have some other uses later on
@@ -30,26 +32,15 @@ data HashTable key value = HashTable {
 
 -- State <> key <> hash <> value
 -- State indicates if this entry is full/deleted/empty
-data Entry key value = Entry !Word8 !key !Int !value
-
-instance (Storable key, Storable value) => Storable (Entry key value) where
-  sizeOf _ = pad + sz
-    where
-      pad = mod sz 8
-      sz = 1 + sizeOf (undefined :: key) + sizeOf (undefined :: value) + sizeOf (undefined :: Int)
-  alignment _ = 8
-  -- TODO Do aligned reads instead
-  peekByteOff ptr off = Entry
-    <$> peekByteOff (coerce ptr) off
-    <*> peekByteOff (coerce ptr) (off + 1)
-    <*> peekByteOff (coerce ptr) (off + 1 + sizeOf (undefined :: key))
-    <*> peekByteOff (coerce ptr) (off + 1 + sizeOf (undefined :: key) + sizeOf (undefined :: Int))
-  -- TODO Do aligned writes instead
-  pokeByteOff ptr off (Entry t k h v) = do
-    pokeByteOff (coerce ptr) off t
-    pokeByteOff (coerce ptr) (off + 1) k
-    pokeByteOff (coerce ptr) (off + 1 + sizeOf (undefined :: key)) h
-    pokeByteOff (coerce ptr) (off + 1 + sizeOf (undefined :: key) + sizeOf (undefined :: Int)) v
+data Entry k v = Entry {
+  ehash :: !Int
+, ekey :: !k
+, evalue :: !v
+, etag :: !Word8
+}
+  deriving stock Generic
+  -- This creates a storable instance with correct padding at each point
+  deriving Storable via (GenericFlat (Entry k v))
 
 new :: forall key value . (Storable key, Storable value) => Int -> IO (HashTable key value)
 new initSz = IO $ \s ->
@@ -73,12 +64,12 @@ insert old@HashTable{..} k v = go start >>= \case
     go :: Int -> IO Bool
     go n | n > capMask = go 0
     go n = do
-      Entry full k1 h1 _ <- readByteArray @(Entry key value) backing n
-      case full of
-        1 -> if h1 == h && k1 == k
-          then writeByteArray backing n (Entry 1 k h v) >> pure False
+      Entry{..} <- readByteArray @(Entry key value) backing n
+      case etag of
+        1 -> if ehash == h && ekey == k
+          then writeByteArray backing n (Entry{etag = 1, ekey = k, ehash = h, evalue = v}) >> pure False
           else go (n + 1)
-        _ -> writeByteArray backing n (Entry 1 k h v) >> pure True
+        _ -> writeByteArray backing n (Entry{etag = 1, ekey = k, ehash = h, evalue = v}) >> pure True
 
 unsafeInsert :: forall key value . (Eq key, Storable key, Storable value) => HashTable key value -> key -> Int -> value -> IO ()
 unsafeInsert HashTable{..} k h v = go start
@@ -87,12 +78,12 @@ unsafeInsert HashTable{..} k h v = go start
     go :: Int -> IO ()
     go n | n > capMask = go 0
     go n = do
-      Entry full k1 h1 _ <- readByteArray @(Entry key value) backing n
-      case full of
-        1 -> if h1 == h && k1 == k
+      Entry{..} <- readByteArray @(Entry key value) backing n
+      case etag of
+        1 -> if ehash == h && ekey == k
           then pure ()
           else go (n + 1)
-        _ -> writeByteArray backing n (Entry 1 k h v)
+        _ -> writeByteArray backing n (Entry{etag = 1, ekey = k, ehash = h, evalue = v})
 
 lookup :: forall key value r . (HashKey key, Storable key, Storable value) => HashTable key value -> key -> (value -> IO r) -> IO r -> IO r
 lookup HashTable{..} k cont notFound = go start
@@ -102,9 +93,9 @@ lookup HashTable{..} k cont notFound = go start
     go :: Int -> IO r
     go n | n > capMask = go 0
     go n = do
-      Entry full k1 h1 v1 <- readByteArray backing n
-      case full of
-        1 -> if h1 == h && k1 == k then cont v1 else go (n + 1)
+      Entry{..} <- readByteArray backing n
+      case etag of
+        1 -> if ehash == h && ekey == k then cont evalue else go (n + 1)
         2 -> go (n + 1)
         _ -> notFound
 
@@ -112,7 +103,7 @@ iterateWithHash :: (Storable key, Storable value) => HashTable key value -> (key
 iterateWithHash HashTable{..} f = go 0
   where
     go n | n > capMask = pure ()
-    go n = readByteArray backing n >>= (\(Entry t k h v) -> when (t == 1) $ f k h v) >> go (n + 1)
+    go n = readByteArray backing n >>= (\Entry{..} -> when (etag == 1) $ f ekey ehash evalue) >> go (n + 1)
 
 resize :: forall key value . (Eq key, Storable key, Storable value) => HashTable key value -> IO (HashTable key value)
 resize old@HashTable{..} = do

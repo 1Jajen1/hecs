@@ -14,6 +14,7 @@ import Hecs.Entity.Internal
 import Data.Proxy
 import Hecs.Filter
 import Control.Monad.Base
+import Data.Coerce
 
 makeWorld :: String -> [Name] -> Q [Dec]
 makeWorld wN names = do
@@ -21,29 +22,29 @@ makeWorld wN names = do
       worldImplName = mkName "WorldImpl"
       wldDec = NewtypeD [] wName [] Nothing (NormalC wName [(Bang NoSourceUnpackedness NoSourceStrictness, AppT (ConT worldImplName) (LitT $ NumTyLit preAllocComps))]) []
       wCon = pure $ ConT wName
-      natTy = pure . LitT $ NumTyLit preAllocComps
+      -- natTy = pure . LitT $ NumTyLit preAllocComps
       mkHasInstance :: Int -> Name -> Q [Dec]
       mkHasInstance eid name = [d|
           instance Has $wCon $cCon where
             getComponentId _ = ComponentId $ EntityId eid
             {-# INLINE getComponentId #-}
-          {-# SPECIALISE syncSetComponent :: WorldImpl $natTy -> EntityId -> ComponentId $cCon -> Store $cCon -> IO () #-}
+          -- {-# SPECIALISE syncSetComponent :: WorldImpl $natTy -> EntityId -> ComponentId $cCon -> $cCon -> IO () #-}
         |]
         where cCon = pure $ ConT name
       processName eid name = do
         reify name >>= \case
           DataConI{} -> [d|
-              instance Component $(conT name) where
-                type Backend $(conT name) = TagBackend
-                type Store $(conT name) = ()
-                backing _ _ _ t = t
-                {-# INLINE backing #-}
               instance Has $wCon $(conT name) where
                 getComponentId _ = ComponentId $ EntityId eid
                 {-# INLINE getComponentId #-}
-              {-# SPECIALISE syncSetComponent :: WorldImpl $natTy -> EntityId -> ComponentId $(conT name) -> Store $(conT name) -> IO () #-}
+              type instance CaseTag $(conT name) a _ = a
             |]
-          TyConI{} -> mkHasInstance eid name
+          TyConI{} -> do
+            xs <- mkHasInstance eid name
+            ys <- reifyInstances (mkName "Component") [ConT name] >>= \case
+              [] -> [d| type instance CaseTag $(conT name) a _ = a |]
+              _ ->  [d| type instance CaseTag $(conT name) _ b = b |]
+            pure $ xs ++ ys
           _ -> error "TODO"
   compInstances <- foldr (\(i, n) acc -> acc >>= \xs -> processName i n >>= \ys -> pure $ ys ++ xs) (pure []) $ zip [1..] names
   otherInstances <- [d|
@@ -52,13 +53,16 @@ makeWorld wN names = do
       instance (Has $wCon l, Has $wCon r) => Has $wCon (Rel l r) where
         getComponentId _ = mkRelation (getComponentId (Proxy @($wCon))) (getComponentId (Proxy @($wCon)))
         {-# INLINE getComponentId #-}
+      instance Has $wCon x => Has $wCon (Wrap (x :: k)) where
+        getComponentId _ = coerce $ getComponentId @_ @_ @x (Proxy @($wCon))
+        {-# INLINE getComponentId #-}
     |]
   specializedApi <- [d|
       getComponentId :: Has $wCon c => ComponentId c
       getComponentId = Hecs.World.Internal.getComponentId (Proxy @($wCon))
       {-# INLINE getComponentId #-}
 
-      component :: forall c . Has $wCon c => Filter c HasMainId
+      component :: forall c . (Component c, Has $wCon c) => Filter c HasMainId
       component = Hecs.Filter.component (Proxy @($wCon))
       {-# INLINE component #-}
 
@@ -66,7 +70,7 @@ makeWorld wN names = do
       filterDSL = Hecs.Filter.filterDSL @($wCon) @xs
       {-# INLINE filterDSL #-}
 
-      getColumn :: forall c ty m . (Has $wCon c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> m (Backend c)
+      getColumn :: forall c ty m . (Component c, Has $wCon c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> m (Column (ComponentKind c) c)
       getColumn ty = Hecs.Filter.getColumn @c @($wCon) @ty @m ty
       {-# INLINE getColumn #-}
     |]

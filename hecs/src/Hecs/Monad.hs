@@ -15,7 +15,6 @@ import Control.Monad.Trans.Control
 import Control.Monad.Base
 import Hecs.Filter
 import Control.Monad.Trans.Class
-import Data.Coerce
 
 newtype HecsM w m a = HecsM { unHecsM :: ReaderT w m a }
   deriving newtype (Functor, Applicative, Monad, MonadIO, MonadTrans, MonadBase b, MonadBaseControl b)  
@@ -35,15 +34,17 @@ instance (MonadBaseControl IO m, Core.WorldClass w) => MonadHecs w (HecsM w m) w
   {-# INLINE newEntity #-}
   freeEntity eid = HecsM $ ask >>= liftBase . flip Core.deAllocateEntity eid
   {-# INLINE freeEntity #-}
+  addTagWithId eid compId = HecsM ask >>= \w -> Core.addTagWithId w eid compId
+  {-# INLINE addTagWithId #-}
+  addComponentWithId eid compId = HecsM ask >>= \w -> Core.addComponentWithId w eid compId
+  {-# INLINE addComponentWithId #-}
   setComponentWithId eid compId comp = HecsM $ ask >>= \w -> liftBase $ Core.setComponentWithId w eid compId comp
   {-# INLINE setComponentWithId #-}
-  getComponentWithId eid compId s (HecsM f) = HecsM $ ask >>= \w -> do
-    st <- liftBaseWith $ \runInBase -> Core.getComponentWithId w eid compId
-      (runInBase . unHecsM . s . coerce)
-      (runInBase f)
-    restoreM st
+  getComponentWithId eid compId s f = HecsM ask >>= \w -> Core.getComponentWithId w eid compId s f
   {-# INLINE getComponentWithId #-}
-  hasTagWithId eid compId = HecsM $ ask >>= \w -> liftBase $ Core.getComponentWithId w eid compId (const $ pure True) (pure False)
+  hasTagWithId eid compId = HecsM ask >>= \w -> Core.hasTagWithId w eid compId
+  {-# INLINE hasTagWithId #-}
+  -- hasTagWithId eid compId = HecsM $ ask >>= \w -> liftBase $ Core.getComponentWithId w eid compId (const $ pure True) (pure False)
   filter :: forall b ty . Filter ty HasMainId -> (TypedArchetype ty -> b -> HecsM w m b) -> HecsM w m b -> HecsM w m b
   filter fi f z = HecsM ask >>= \w -> Core.forFilter w fi f z
   {-# INLINE filter #-}

@@ -1,133 +1,67 @@
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE MagicHash #-}
-{-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE RoleAnnotations #-}
-{-# LANGUAGE DefaultSignatures #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
+{-# LANGUAGE MagicHash #-}
 module Hecs.Component.Internal (
   ComponentId(..)
 , Component(..)
-, ViaStorable(..)
-, StorableBackend(..)
-, ArrayBackend(..)
-, ComponentBackend(..)
-, TagBackend
-, NoTagBackend
-, ReadTagMsg
-, IsTag
--- , ComponentRef(..)
+, ComponentType(..)
+, Column(..)
+, ViaBox(..)
+, ViaFlat(..)
 ) where
 
 import Hecs.Entity.Internal
-import Hecs.HashTable.HashKey
-
 import Foreign.Storable
-import GHC.Exts
 import Data.Proxy
+import GHC.Exts
+import Hecs.HashTable.HashKey
 import Data.Kind
 import Data.Int
-import Data.Word ( Word8, Word16, Word32, Word64 )
-import GHC.IO hiding (liftIO)
-import GHC.TypeLits
-import Control.Monad.Base
+import Data.Word
 
-{-
+newtype ComponentId (c :: k) = ComponentId EntityId
+  deriving newtype (Eq, HashKey)
 
-Components in flecs:
-- Entities with Component component
-Tags in flecs:
-- Entities without the Component component
+data ComponentType = Boxed | Flat
 
-I have a ton of static information and I can easily thread it around:
-- Force an easily derivable Component class. This class determines the type (Boxed, Flat, Tag)
+class Coercible (Value c) c => Component c where
+  type ComponentKind c :: ComponentType
+  type Value c :: Type
+  backing :: Proxy c -> (ComponentKind c ~ Boxed => r) -> ((ComponentKind c ~ Flat, Storable (Value c)) => r) -> r
 
--}
+data family Column (ty :: ComponentType) c
+data instance Column Boxed c = ColumnBoxed (MutableArray# RealWorld c)
+data instance Column Flat  c = ColumnFlat  (MutableByteArray# RealWorld)
 
-newtype ComponentId c = ComponentId EntityId
-  deriving stock Show
-  deriving newtype (Eq, HashKey, Storable)
+newtype ViaBox a = ViaBox a
 
-type family NoTagBackend a err :: Constraint where
-  NoTagBackend TagBackend err = TypeError ('Text err)
-  NoTagBackend _ _ = ()
-
-type ReadTagMsg = "Cannot read a tag"
-
-type IsTag :: a -> Symbol -> Constraint
-type family IsTag a err :: Constraint where
-  IsTag TagBackend _ = ()
-  IsTag a err = TypeError ('Text err :$$: ('Text "Cannot match " :<>: ShowType a :<>: 'Text " with expected TagBackend"))
-
--- TODO Can we reasonably make a default instance?
--- TODO Just encode this in the high bits of the component id?
-class Component (a :: k) where
-  type Backend a :: Type
-  type Store a :: Type
-  backing :: Proxy a
-    -> ((Backend a ~ ArrayBackend (Store a) => r))
-    -> ((Backend a ~ StorableBackend (Store a), Storable (Store a)) => r)
-    -> (Backend a ~ TagBackend => r)
-    -> r
-
-newtype ViaStorable a = ViaStorable a
-
-instance Storable a => Component (ViaStorable a) where
-  type Backend (ViaStorable a) = StorableBackend a
-  type Store (ViaStorable a) = a
-  backing _ _ flat _ = flat
+instance Component (ViaBox a) where
+  type ComponentKind (ViaBox a) = Boxed
+  type Value (ViaBox a) = a
+  backing _ b _ = b
   {-# INLINE backing #-}
 
-deriving via (ViaStorable Int  ) instance Component Int
-deriving via (ViaStorable Int8 ) instance Component Int8
-deriving via (ViaStorable Int16) instance Component Int16
-deriving via (ViaStorable Int32) instance Component Int32
-deriving via (ViaStorable Int64) instance Component Int64
+newtype ViaFlat a = ViaFlat a
+  deriving newtype Storable
 
-deriving via (ViaStorable Word  ) instance Component Word
-deriving via (ViaStorable Word8 ) instance Component Word8
-deriving via (ViaStorable Word16) instance Component Word16
-deriving via (ViaStorable Word32) instance Component Word32
-deriving via (ViaStorable Word64) instance Component Word64
+instance Storable a => Component (ViaFlat a) where
+  type ComponentKind (ViaFlat a) = Flat
+  type Value (ViaFlat a) = a
+  backing _ _ f = f
+  {-# INLINE backing #-}
 
-deriving via (ViaStorable Float ) instance Component Float
-deriving via (ViaStorable Double) instance Component Double
+deriving via (ViaFlat Int  ) instance Component Int
+deriving via (ViaFlat Int8 ) instance Component Int8
+deriving via (ViaFlat Int16) instance Component Int16
+deriving via (ViaFlat Int32) instance Component Int32
+deriving via (ViaFlat Int64) instance Component Int64
 
-data ArrayBackend a = ArrayBackend (MutableArray# RealWorld a)
+deriving via (ViaFlat Word  ) instance Component Word
+deriving via (ViaFlat Word8 ) instance Component Word8
+deriving via (ViaFlat Word16) instance Component Word16
+deriving via (ViaFlat Word32) instance Component Word32
+deriving via (ViaFlat Word64) instance Component Word64
 
-data StorableBackend a = StorableBackend (MutableByteArray# RealWorld)
-
-data TagBackend
-
-class ComponentBackend b a where
-  readColumn :: MonadBase IO m => b a -> Int -> m a
-  writeColumn :: MonadBase IO m => b a -> Int -> a -> m ()
-  readRef :: MonadBase IO m => ComponentRef b a -> m a
-  writeRef :: MonadBase IO m => ComponentRef b a -> a -> m ()
-
-instance ComponentBackend ArrayBackend a where
-  readColumn (ArrayBackend arr) (I# n) = liftBase $ IO (readArray# arr n)
-  {-# INLINE readColumn #-}
-  writeColumn (ArrayBackend arr) (I# n) el = liftBase . IO $ \s -> case writeArray# arr n el s of s1 -> (# s1, () #)
-  {-# INLINE writeColumn #-}
-  readRef (ArrayComponentRef n b) = readColumn b (I# n)
-  {-# INLINE readRef #-}
-  writeRef (ArrayComponentRef n b) = writeColumn b (I# n)
-  {-# INLINE writeRef #-}
-
-instance Storable a => ComponentBackend StorableBackend a where
-  readColumn (StorableBackend arr) n = liftBase $ peekElemOff (Ptr (mutableByteArrayContents# arr)) n
-  {-# INLINE readColumn #-}
-  writeColumn (StorableBackend arr) n el = liftBase $ pokeElemOff (Ptr (mutableByteArrayContents# arr)) n el
-  {-# INLINE writeColumn #-}
-  readRef (StorableComponentRef n b) = readColumn b (I# n)
-  {-# INLINE readRef #-}
-  writeRef (StorableComponentRef n b) = writeColumn b (I# n)
-  {-# INLINE writeRef #-}
-
--- TODO For later
-data family ComponentRef (backing :: Type -> Type) c
-
-data instance ComponentRef ArrayBackend a = ArrayComponentRef Int# {-# UNPACK #-} !(ArrayBackend a)
-data instance ComponentRef StorableBackend a = StorableComponentRef Int# {-# UNPACK #-} !(StorableBackend a)
+deriving via (ViaFlat Float ) instance Component Float
+deriving via (ViaFlat Double) instance Component Double

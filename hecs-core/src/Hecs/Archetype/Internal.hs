@@ -24,6 +24,8 @@ module Hecs.Archetype.Internal (
 , iterateComponentIds
 , getColumn
 , addEntity
+, hasTag
+, addTagType
 ) where
 
 import Hecs.Component.Internal
@@ -103,9 +105,13 @@ addComponentType (ArchetypeTy boxedTy unboxedTy tagTy) compId =
       (# s1, newBoxedTy, ind #) -> (# s1, (ArchetypeTy newBoxedTy unboxedTy tagTy, I# ind) #))
     (IO $ \s -> case addComponent unboxedTy compId s of
       (# s1, newUnboxedTy, ind #) -> (# s1, (ArchetypeTy boxedTy newUnboxedTy tagTy, I# ind) #))
-    (IO $ \s -> case addComponent tagTy compId s of
-      (# s1, newTagTy, ind #) -> (# s1, (ArchetypeTy boxedTy unboxedTy newTagTy, I# ind) #))
 {-# INLINE addComponentType #-}
+
+addTagType :: forall c . ArchetypeTy -> ComponentId c -> IO (ArchetypeTy, Int)
+addTagType (ArchetypeTy boxedTy unboxedTy tagTy) compId =
+  IO $ \s -> case addComponent tagTy compId s of
+    (# s1, newTagTy, ind #) -> (# s1, (ArchetypeTy boxedTy unboxedTy newTagTy, I# ind) #)
+{-# INLINE addTagType #-}
 
 newtype ComponentType# = ComponentType# ByteArray#
 
@@ -212,11 +218,10 @@ empty = do
                         #)
 
 -- Note: This performs no bounds checks. At this point we should have already checked if that entity and the component is in this table!
-readComponent :: forall a . Component a => Proxy a -> Archetype -> Int -> Int -> IO (Store a)
+readComponent :: forall a . Component a => Proxy a -> Archetype -> Int -> Int -> IO a
 readComponent p = backing p
   readBoxedComponent
-  readStorableComponent
-  (\_ _ _ -> pure $ error "Hecs.Archetype.Internal:readComponent Tag placeholder. Do not evaluate tags")
+  (\aty row col -> coerce $ readStorableComponent @(Value a) aty row col)
 {-# INLINE readComponent #-}
 
 readStorableComponent :: Storable a => Archetype -> Int -> Int -> IO a
@@ -233,11 +238,10 @@ readBoxedComponent Archetype{columns = Columns# _ _ arrs _ _} (I# row) (I# colum
       (# s'', a #) -> (# s'', unsafeCoerce a #)
 {-# INLINE readBoxedComponent #-}
 
-writeComponent :: forall a . Component a => Proxy a -> Archetype -> Int -> Int -> Store a -> IO ()
+writeComponent :: forall a . Component a => Proxy a -> Archetype -> Int -> Int -> a -> IO ()
 writeComponent p = backing p
   writeBoxedComponent
-  writeStorableComponent
-  (\_ _ _ _ -> pure ()) -- TODO Is this fine? Probably, allows me to reuse this without any duplication
+  (\aty row col el -> writeStorableComponent @(Value a) aty row col (coerce el))
 {-# INLINE writeComponent #-}
 
 writeStorableComponent :: Storable a => Archetype -> Int -> Int -> a -> IO ()
@@ -254,18 +258,20 @@ writeBoxedComponent Archetype{columns = Columns# _ _ arrs _ _} (I# row) (I# colu
       s2 -> (# s2, () #)
 {-# INLINE writeBoxedComponent #-}
 
+hasTag :: Archetype -> ComponentId c -> (Int -> r) -> r -> r
+hasTag Archetype{componentTyF} compId s = indexComponent# componentTyF compId (\i -> s (I# i))
+{-# INLINE hasTag #-}
+
 lookupComponent :: forall c r . Component c => Archetype -> ComponentId c -> (Int -> r) -> r -> r
 lookupComponent = backing (Proxy @c)
   (\Archetype{componentTyB} compId s -> indexComponent# componentTyB compId (\i -> s (I# i)))
   (\Archetype{componentTyF} compId s -> indexComponent# componentTyF compId (\i -> s (I# i)))
-  (\Archetype{componentTyT} compId s -> indexComponent# componentTyT compId (\i -> s (I# i)))
 {-# INLINE lookupComponent #-}
 
-getColumn :: forall c . Component c => Proxy c -> Archetype -> Int -> IO (Backend c)
+getColumn :: forall c . Component c => Proxy c -> Archetype -> Int -> IO (Column (ComponentKind c) c)
 getColumn p (Archetype{columns = Columns# _ _ boxed _ unboxed}) (I# col) = backing p
-  (IO $ \s -> case readSmallArray# boxed col s of (# s1, arr #) -> (# s1, ArrayBackend (unsafeCoerce# arr) #))
-  (IO $ \s -> case readSmallArray# unboxed col s of (# s1, arr #) -> (# s1, StorableBackend arr #))
-  (error "Hecs.Archetype.Internal:getColumn Tried getting the column of a tag")
+  (IO $ \s -> case readSmallArray# boxed col s of (# s1, arr #) -> (# s1, ColumnBoxed (unsafeCoerce# arr) #))
+  (IO $ \s -> case readSmallArray# unboxed col s of (# s1, arr #) -> (# s1, ColumnFlat arr #))
 {-# INLINE getColumn #-}
 
 grow :: Columns# -> State# RealWorld -> State# RealWorld

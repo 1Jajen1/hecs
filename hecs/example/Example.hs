@@ -19,14 +19,13 @@ data Position = Pos {-# UNPACK #-} !Int {-# UNPACK #-} !Float {-# UNPACK #-} !In
   deriving (Storable, Component) via (GenericFlat Position)
 
 data Test
-  deriving stock Generic
-  deriving Component via (ViaTag Test)
 
-newtype Boxed = Boxed Int
-  deriving Component via (ViaBoxed Boxed)
+newtype Boxed = Boxed1 Int
+  deriving Component via (ViaBox Boxed)
 
 data Color = Red | Green | Blue
-  deriving Component via (ViaTag Color)
+  deriving stock (Eq, Show)
+  deriving Component via (ViaBox Color)
 
 makeWorld "World" [
     ''Int
@@ -44,34 +43,36 @@ main = do
     eid <- newEntity
     defer $ do
       eid <- newEntity
-      setComponent @Boxed eid $ Boxed 10
+      setComponent @Boxed eid $ Boxed1 10
       setComponent @Int eid 10
-      -- getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
+      getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
     getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
     e2 <- newEntity
-    setTag @Test e2
-    setComponent e2 (Rel @Test @Int 10)
+    addTag @Test e2
+    setComponent e2 (Rel @Color @(Wrap Red) Red)
     liftIO $ putStrLn "Set tag!"
+    getComponent @(Rel Color (Wrap Red)) e2 (pure . Just) (pure Nothing) >>= liftIO . print
     setComponent @Int e2 100
-    setComponent @Position e2 (Pos 10 20 0)
-    setTag @Red e2
+    setComponent e2 (Pos 10 20 0)
+    addTag @Red e2
+    hasTag @Red e2 >>= liftIO . print
     void . replicateM 1000 $ do
       car <- newEntity
-      -- liftIO $ print car
+      liftIO $ print car
       setComponent @Int car 100
-      -- getComponent @Int car (liftIO . print) (pure ())
+      getComponent @Int car (liftIO . print) (pure ())
       setComponent car (Pos 10 0 50)
-      -- getComponent @Position car (liftIO . print) (pure ())
-      -- liftIO $ print $ sizeOf (undefined @_ @Position)
-      -- liftIO $ print $ alignment (undefined @_ @Position)
+      getComponent @Position car (liftIO . print) (pure ())
+      liftIO $ print $ sizeOf (undefined @_ @Position)
+      liftIO $ print $ alignment (undefined @_ @Position)
       pure ()
-    Hecs.filter (filterDSL @'[Int, Or Boxed Position])
+    Hecs.filter (filterDSL @'[Int, Wrap Red, Or Boxed Position])
       (\aty _ -> do
         x <- getColumn @Int aty
         es <- getEntityColumn aty
         iterateArchetype aty $ \n e -> do
           liftIO $ print e
-          readColumn x n >>= liftIO . print 
+          -- readColumn x n >>= liftIO . print 
         pure ()
           )
       (pure ())

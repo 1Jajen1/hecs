@@ -7,15 +7,14 @@ module Hecs.Filter (
 , FilterContext(HasMainId)
 , (.&&.), (.||.)
 , not
-, componentWithId
-, component
+, component, componentWithId
+, tag, tagWithId
 , TypedArchetype(..)
-, getColumn
-, getColumnWithId
+, getColumn, getColumnWithId
 , getEntityColumn
 , TypedHas
 , iterateArchetype
-, And, Or, Not
+, And, Or, Not, Wrap
 , FilterDSL
 , filterDSL
 , FilterFromList
@@ -36,15 +35,19 @@ import Data.Kind
 import Control.Monad.Base
 import Control.Monad.Trans.Control
 
-component :: forall c w . Has w c => Proxy w -> Filter c HasMainId
+component :: forall c w . (Component c, Has w c) => Proxy w -> Filter c HasMainId
 component w = componentWithId $ getComponentId w
 {-# INLINE component #-}
 
-getColumn :: forall c w ty m . (Has w c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> m (Backend c)
+tag :: forall {k} (c :: k) (w :: Type) . Has w c => Proxy w -> Filter c HasMainId
+tag w = tagWithId $ getComponentId w
+{-# INLINE tag #-}
+
+getColumn :: forall c w ty m . (Component c, Has w c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> m (Column (ComponentKind c) c)
 getColumn aty = getColumnWithId @c aty (getComponentId @_ @_ @c (Proxy @w))
 {-# INLINE getColumn #-}
 
-getColumnWithId :: forall c ty m . (Component c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> ComponentId c -> m (Backend c)
+getColumnWithId :: forall c ty m . (Component c, TypedHas ty c, MonadBase IO m) => TypedArchetype ty -> ComponentId c -> m (Column (ComponentKind c) c)
 getColumnWithId ty c = liftBase $ Hecs.Filter.Internal.getColumnWithId ty c
 {-# INLINE getColumnWithId #-}
 
@@ -54,7 +57,7 @@ iterateArchetype ty f = do
   restoreM st
 {-# INLINE iterateArchetype #-}
 
-getEntityColumn :: MonadBase IO m => TypedArchetype ty -> m (StorableBackend EntityId)
+getEntityColumn :: MonadBase IO m => TypedArchetype ty -> m (Column Flat EntityId)
 getEntityColumn ty = liftBase $ Hecs.Filter.Internal.getEntityColumn ty
 {-# INLINE getEntityColumn #-}
 
@@ -69,7 +72,8 @@ type family HasMain ty :: FilterContext where
   HasMain (And l r) = CombineCtx (HasMain l) (HasMain r)
   HasMain (Or l r) = CombineCtx (HasMain l) (HasMain r)
   HasMain (Not a) = InvertCtx (HasMain a)
-  HasMain _ = HasMainId
+  HasMain (Wrap _) = HasMainId
+  HasMain (_::Type) = HasMainId
 
 filterDSL :: forall {k} (w :: Type) (xs :: [k]) . FilterDSL w (FilterFromList xs) => Filter (FilterFromList xs) (HasMain (FilterFromList xs))
 filterDSL = filterDSLI (Proxy @w) (Proxy @(FilterFromList xs))
@@ -90,6 +94,10 @@ instance {-# OVERLAPPING #-} (FilterDSL w l, FilterDSL w r) => FilterDSL w (And 
   filterDSLI p _ = filterDSLI p (Proxy @l) .&&. filterDSLI p (Proxy @r) 
   {-# INLINE filterDSLI #-}
 
-instance {-# INCOHERENT #-} (Has w c, HasMain c ~ HasMainId) => FilterDSL w c where
+instance {-# OVERLAPPING #-} (Has w (Wrap c), HasMain (Wrap c) ~ HasMainId) => FilterDSL w (Wrap c) where
+  filterDSLI p _ = tag p
+  {-# INLINE filterDSLI #-}
+
+instance {-# INCOHERENT #-} (Component c, Has w c, HasMain c ~ HasMainId) => FilterDSL w c where
   filterDSLI p _ = component p
   {-# INLINE filterDSLI #-}

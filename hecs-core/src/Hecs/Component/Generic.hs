@@ -4,13 +4,14 @@ module Hecs.Component.Generic (
   GenericFlat(..)
 ) where
 
-import Hecs.Component.Internal
 import Foreign.Storable
 import GHC.Generics
 import Data.Kind
 import Foreign.Ptr
 import Data.Coerce
 import Control.Monad
+
+import Hecs.Component.Internal
 
 -- TODO Benchmark, look here for how to:
 -- https://hackage.haskell.org/package/derive-storable-plugin
@@ -20,9 +21,9 @@ import Control.Monad
 newtype GenericFlat a = GenericFlat a
 
 instance (Generic a, GSizeOf (Rep a), GAlignment (Rep a), GPoke (Rep a), GPeek (Rep a)) => Component (GenericFlat a) where
-  type Backend (GenericFlat a) = StorableBackend (GenericFlat a)
-  type Store (GenericFlat a) = GenericFlat a
-  backing _ _ flat _ = flat
+  type ComponentKind (GenericFlat a) = Flat
+  type Value (GenericFlat a) = GenericFlat a
+  backing _ _ f = f
   {-# INLINE backing #-}
 
 instance (Generic a, GSizeOf (Rep a), GAlignment (Rep a), GPoke (Rep a), GPeek (Rep a)) => Storable (GenericFlat a) where
