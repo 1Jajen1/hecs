@@ -3,6 +3,7 @@
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE ViewPatterns #-}
 module Hecs.Component.Relation (
   Rel(..)
 , mkRelation
@@ -20,6 +21,7 @@ import Data.Void
 import GHC.TypeLits
 import Data.Coerce
 import Data.Kind
+import Data.Bitfield
 
 -- Type voodoo ahead, continue at your own risk
 
@@ -146,6 +148,7 @@ instance
     {-# INLINE backing #-}
 
 mkRelation :: ComponentId l -> ComponentId r -> ComponentId (Rel l r)
-mkRelation (ComponentId (EntityId l)) (ComponentId (EntityId r)) = ComponentId (EntityId combined)
+mkRelation (ComponentId (EntityId (unwrap -> l))) (ComponentId (EntityId (unwrap -> r))) = ComponentId (EntityId $ Bitfield combined)
   where
+
     combined = l `unsafeShiftL` 32 .|. r

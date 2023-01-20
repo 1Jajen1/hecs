@@ -7,6 +7,7 @@ module Hecs.Monad.Class (
 , getComponent
 , addTag
 , hasTag
+, addComponent
 ) where
 
 import qualified Hecs.Entity.Internal as Core
@@ -33,6 +34,10 @@ class Monad m => MonadHecs (w :: Type) (m :: Type -> Type) | m -> w where
   filter :: Core.Filter ty Core.HasMainId -> (Core.TypedArchetype ty -> b -> m b) -> m b -> m b
   defer :: m a -> m a
   sync :: m ()
+
+addComponent :: forall c w m . (MonadHecs w m, Core.Has w c, Core.Component c) => Core.EntityId -> m ()
+addComponent eid = addComponentWithId eid (Hecs.World.Internal.getComponentId @_ @_ @c (Proxy @w))
+{-# INLINE addComponent #-}
 
 setComponent :: forall c w m . (MonadHecs w m, Core.Has w c, Core.Component c) => Core.EntityId -> c -> m ()
 setComponent eid comp = setComponentWithId eid (Hecs.World.Internal.getComponentId @_ @_ @c (Proxy @w)) (coerce comp)

@@ -2,6 +2,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE MagicHash #-}
 module Hecs.World.Internal (
   WorldImpl(..)
 , WorldClass(..)
@@ -25,12 +26,13 @@ import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
 import Data.Coerce
 import GHC.IO
-import Foreign.Storable (sizeOf)
+import Foreign.Storable (sizeOf, alignment)
 import GHC.Exts (Any)
 import Data.IORef
 import Control.Concurrent.MVar
 import Data.Bits
 import Data.Kind
+import Data.Bitfield
 
 -- This is going to be wrapped by 'makeWorld "World" [''Comp1, ''Comp2, ...]' which enables
 -- making some component ids static. The componentMap is then only used for unknown/dynamic components
@@ -189,7 +191,7 @@ syncAdd ::
   -> WorldImpl n -> EntityId -> ComponentId c -> IO (Archetype, Int, Int)
 syncAdd newArchetype addToType lookupCol WorldImpl{..} eid compId = do
   eIndex <- readIORef entityIndexRef
-  let ArchetypeRecord row aty = IM.findWithDefault (error "Hecs.World.Internal:setComponentI entity id not in entity index!") (coerce eid) eIndex
+  let ArchetypeRecord row aty = IM.findWithDefault (error "Hecs.World.Internal:syncAdd entity id not in entity index!") (coerce eid) eIndex
   -- Check if we have that component, if yes, write it, if no, move the entity
   lookupCol aty (\c -> pure (aty, row, c)) $ Archetype.getEdge aty compId >>= \case
     ArchetypeEdge (Just dstAty) _ -> lookupCol dstAty (\c -> do
@@ -198,7 +200,7 @@ syncAdd newArchetype addToType lookupCol WorldImpl{..} eid compId = do
       writeIORef entityIndexRef $! IM.insert (coerce eid) (ArchetypeRecord newRow dstAty) $ IM.insert (coerce movedEid) (ArchetypeRecord row aty) eIndex
       pure (dstAty, newRow, c)
       )
-      (error "Hecs.World.Internal:setComponentI edge destination did not have component")
+      (error $ "Hecs.World.Internal:syncAdd edge destination did not have component: " <> show compId <> ". Searched in " <> show (getTy dstAty) )
     ArchetypeEdge Nothing _ -> do
       (newTy, newColumn) <- addToType (Archetype.getTy aty)
 
@@ -242,7 +244,7 @@ syncAddComponent :: forall c n . Component c => WorldImpl n -> EntityId -> Compo
 syncAddComponent w eid compId = void $ syncAdd
   (\aty newTy newColumn -> backing (Proxy @c)
       (Archetype.createArchetype newTy (getColumnSizes aty))
-      (IO $ \s0 -> case Archetype.addColumnSize newColumn (sizeOf (undefined @_ @(Value c))) (getColumnSizes aty) s0 of
+      (IO $ \s0 -> case Archetype.addColumnSize newColumn (sizeOf (undefined @_ @(Value c))) (alignment (undefined @_ @(Value c))) (getColumnSizes aty) s0 of
         (# s1, newSzs #) -> case Archetype.createArchetype newTy newSzs of
           IO f -> f s1))
   (`Archetype.addComponentType` compId)
@@ -254,7 +256,7 @@ syncSetComponent w eid compId comp = do
   (newAty, newRow, newCol) <- syncAdd
     (\aty newTy newColumn -> backing (Proxy @c)
       (Archetype.createArchetype newTy (getColumnSizes aty))
-      (IO $ \s0 -> case Archetype.addColumnSize newColumn (sizeOf (undefined @_ @(Value c))) (getColumnSizes aty) s0 of
+      (IO $ \s0 -> case Archetype.addColumnSize newColumn (sizeOf (undefined @_ @(Value c))) (alignment (undefined @_ @(Value c))) (getColumnSizes aty) s0 of
         (# s1, newSzs #) -> case Archetype.createArchetype newTy newSzs of
           IO f -> f s1))
     (`Archetype.addComponentType` compId)

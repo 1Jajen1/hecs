@@ -22,6 +22,7 @@ common common-options
                      , containers
                      , transformers-base
                      , monad-control
+                     , bitfield
   
   ghc-options:         -Wall
                        -Wcompat

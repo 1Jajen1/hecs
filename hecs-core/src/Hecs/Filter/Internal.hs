@@ -36,6 +36,7 @@ import Data.Type.Bool hiding (Not)
 import qualified Data.Type.Bool
 import GHC.Exts
 import GHC.IO (IO(..))
+import Data.Bitfield
 
 data FilterContext = HasMainId | DoesNotHaveMainId
 
@@ -119,7 +120,7 @@ iterateArchetype (TypedArchetype (Archetype{columns = Columns# szRef eidsRef _ _
   where
     go arr sz n b s
       | isTrue# (n >=# sz) = (# s, b #)
-      | otherwise = case readIntArray# arr n s of (# s1, eid #) -> case f (I# n) (EntityId (I# eid)) b of IO g -> case g s1 of (# s2, st #) -> go arr sz (n +# 1#) st s2
+      | otherwise = case readIntArray# arr n s of (# s1, eid #) -> case f (I# n) (EntityId $ Bitfield (I# eid)) b of IO g -> case g s1 of (# s2, st #) -> go arr sz (n +# 1#) st s2
 {-# INLINE iterateArchetype #-}
 
 type TypedHas :: k -> l -> Constraint

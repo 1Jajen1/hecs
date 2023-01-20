@@ -12,9 +12,10 @@ import Hecs.Component.Relation
 import Hecs.Entity.Internal
 
 import Data.Proxy
-import Hecs.Filter
+import Hecs.Filter hiding (tag)
 import Control.Monad.Base
 import Data.Coerce
+import Data.Bitfield
 
 makeWorld :: String -> [Name] -> Q [Dec]
 makeWorld wN names = do
@@ -26,7 +27,7 @@ makeWorld wN names = do
       mkHasInstance :: Int -> Name -> Q [Dec]
       mkHasInstance eid name = [d|
           instance Has $wCon $cCon where
-            getComponentId _ = ComponentId $ EntityId eid
+            getComponentId _ = ComponentId . EntityId $ Bitfield eid -- TODO Maybe pack instead
             {-# INLINE getComponentId #-}
           -- {-# SPECIALISE syncSetComponent :: WorldImpl $natTy -> EntityId -> ComponentId $cCon -> $cCon -> IO () #-}
         |]
@@ -35,7 +36,7 @@ makeWorld wN names = do
         reify name >>= \case
           DataConI{} -> [d|
               instance Has $wCon $(conT name) where
-                getComponentId _ = ComponentId $ EntityId eid
+                getComponentId _ = ComponentId $ EntityId $ Bitfield eid
                 {-# INLINE getComponentId #-}
               type instance CaseTag $(conT name) a _ = a
             |]

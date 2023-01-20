@@ -21,7 +21,7 @@ import Data.Int
 import Data.Word
 
 newtype ComponentId (c :: k) = ComponentId EntityId
-  deriving newtype (Eq, HashKey)
+  deriving newtype (Eq, Show, HashKey)
 
 data ComponentType = Boxed | Flat
 

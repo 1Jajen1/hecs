@@ -14,6 +14,8 @@ import GHC.Generics
 import Foreign.Storable
 import Control.Monad
 
+import Control.Concurrent
+
 data Position = Pos {-# UNPACK #-} !Int {-# UNPACK #-} !Float {-# UNPACK #-} !Int
   deriving stock (Show, Generic)
   deriving (Storable, Component) via (GenericFlat Position)
@@ -40,43 +42,50 @@ main :: IO ()
 main = do
   w <- newWorld @World
   void . runHecsM w $ do
-    eid <- newEntity
-    defer $ do
-      eid <- newEntity
-      setComponent @Boxed eid $ Boxed1 10
-      setComponent @Int eid 10
-      getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
-    getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
-    e2 <- newEntity
-    addTag @Test e2
-    setComponent e2 (Rel @Color @(Wrap Red) Red)
-    liftIO $ putStrLn "Set tag!"
-    getComponent @(Rel Color (Wrap Red)) e2 (pure . Just) (pure Nothing) >>= liftIO . print
-    setComponent @Int e2 100
-    setComponent e2 (Pos 10 20 0)
-    addTag @Red e2
-    hasTag @Red e2 >>= liftIO . print
-    void . replicateM 1000 $ do
+    -- eid <- newEntity
+    -- defer $ do
+    --   eid <- newEntity
+    --   setComponent @Boxed eid $ Boxed1 10
+    --   setComponent @Int eid 10
+    --   getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
+    -- liftIO $ print 1
+    -- getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
+    -- e2 <- newEntity
+    -- addTag @Test e2
+    -- setComponent e2 (Rel @Color @(Wrap Red) Red)
+    -- liftIO $ putStrLn "Set tag!"
+    -- getComponent @(Rel Color (Wrap Red)) e2 (pure . Just) (pure Nothing) >>= liftIO . print
+    -- setComponent @Int e2 100
+    -- setComponent e2 (Pos 10 20 0)
+    -- addTag @Red e2
+    -- hasTag @Red e2 >>= liftIO . print
+    void . replicateM 10000000 $ do
+      -- liftIO $ putStrLn "D (-1)"
       car <- newEntity
-      liftIO $ print car
-      setComponent @Int car 100
-      getComponent @Int car (liftIO . print) (pure ())
-      setComponent car (Pos 10 0 50)
-      getComponent @Position car (liftIO . print) (pure ())
-      liftIO $ print $ sizeOf (undefined @_ @Position)
-      liftIO $ print $ alignment (undefined @_ @Position)
+      -- liftIO $ putStrLn "D 0" -- .
+      -- liftIO $ print car
+      -- liftIO $ putStrLn "D 1"
+      addComponent @Int car -- 100
+      -- liftIO $ putStrLn "D 2"
+      -- getComponent @Int car (liftIO . print) (pure ())
+      -- liftIO $ putStrLn "D 3" -- .
+      -- addTag @Red car
+      setComponent @Position car (Pos 10 0 50)
+      -- liftIO $ putStrLn "D 4"
+      -- getComponent @Position car (liftIO . print) (pure ())
+      -- liftIO $ putStrLn "D 5" -- .
       pure ()
-    Hecs.filter (filterDSL @'[Int, Wrap Red, Or Boxed Position])
-      (\aty _ -> do
-        x <- getColumn @Int aty
-        es <- getEntityColumn aty
-        iterateArchetype aty $ \n e -> do
-          liftIO $ print e
-          -- readColumn x n >>= liftIO . print 
-        pure ()
-          )
-      (pure ())
-    getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
-    getComponent @Int e2 (pure . Just) (pure Nothing) >>= liftIO . print
-    hasTag @Red e2 >>= liftIO . print
+    -- Hecs.filter (filterDSL @'[Int, Wrap Red, Or Boxed Position])
+    --   (\aty _ -> do
+    --     x <- getColumn @Int aty
+    --     es <- getEntityColumn aty
+    --     iterateArchetype aty $ \n e -> do
+    --       liftIO $ print e
+    --       -- readColumn x n >>= liftIO . print 
+    --     pure ()
+    --     )
+    --   (pure ())
+    -- getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
+    -- getComponent @Int e2 (pure . Just) (pure Nothing) >>= liftIO . print
+    -- hasTag @Red e2 >>= liftIO . print
   putStrLn "Done"

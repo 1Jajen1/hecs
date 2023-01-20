@@ -1,31 +1,39 @@
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE RecordWildCards #-}
 module Hecs.Entity.Internal (
   EntityId(..)
 , FreshEntityId(..)
 , new
 , allocateEntityId
 , deAllocateEntityId
+, Entity(..)
+, EntityTag(..)
 ) where
 
 import Control.Monad
 import Control.Monad.Primitive
 
+import Data.Bits
+import Data.Bitfield.Internal
 import Data.Int
-
 import Data.Primitive.ByteArray
+
 import Foreign.Storable
 
+import GHC.Generics
+
 import Hecs.HashTable.HashKey
-import Data.Bits
 
 new :: IO FreshEntityId
 new = do
   -- Allocate id storage with space for 256 entity ids...
   arr <- newByteArray initSz
-  indArr <- newByteArray initSz
+  indArr <- newByteArray initIndSz
   pure $ FreshEntityId 0 0 arr indArr
   where
-    -- 4 bytes per entityid
-    initSz = 4 * 256
+    -- 8 bytes per entityid
+    initSz = 8 * 256
+    initIndSz = 4 * 256
 
 allocateEntityId :: FreshEntityId -> IO (FreshEntityId, EntityId)
 allocateEntityId (FreshEntityId sz highestId arr indArr) = do
@@ -33,55 +41,53 @@ allocateEntityId (FreshEntityId sz highestId arr indArr) = do
   if sz == highestId
     then do
       let cap = sizeofMutableByteArray arr
+          capInd = sizeofMutableByteArray indArr
       -- check if we have space in the id array left, if not just double it
-      -- This may seem like a lot of memory, but 256 entities are just as much
-      -- storage as minimum a single chunk section needs for just blockstates, so this is nothing
-      -- even if doubled a few times
-      (arr', indArr') <- if sz >= unsafeShiftR cap 2
+      (arr', indArr') <- if sz >= unsafeShiftR cap 3
         then do
           arr' <- newByteArray (cap * 2)
           copyMutableByteArray arr 0 arr' 0 cap
-          indArr' <- newByteArray (cap * 2)
-          copyMutableByteArray indArr 0 indArr' 0 cap
+          indArr' <- newByteArray (capInd * 2)
+          copyMutableByteArray indArr 0 indArr' 0 capInd
           pure (arr', indArr')
         else pure (arr, indArr)
 
       -- add our new id to the end of the array and also set its index mapping
-      writeByteArray @Int32 arr' highestId (fromIntegral highestId)
+      writeByteArray @Int arr' highestId highestId     -- TODO Use pack here?
       writeByteArray @Int32 indArr' highestId (fromIntegral highestId)
       -- increment the size and the highest ever id
       let st = FreshEntityId (sz + 1) (highestId + 1) arr' indArr'
       -- return the newly generated id
-      pure (st, EntityId highestId)
+      pure (st, EntityId $ Bitfield highestId)
     else do
       -- reuse the last freed id
       -- For details as to why freed ids are at the end of the array in the first place check
       --  the deallocate method
-      newId <- fromIntegral <$> readByteArray @Int32 arr sz
+      reusedId <- Bitfield @Int @Entity <$> readByteArray arr sz
       -- increment the size
       let st = FreshEntityId (sz + 1) highestId arr indArr
-      -- return the reused id
-      pure (st, EntityId newId)
+      -- return the reused id but increment the generation
+      pure (st, EntityId . pack $ Entity { eid = get @"eid" reusedId, generation = 1 + get @"generation" reusedId, pad = 0, tag = pack $ EntityTag False })
 
 deAllocateEntityId :: FreshEntityId -> EntityId -> IO FreshEntityId
 deAllocateEntityId old@(FreshEntityId sz _ _ _) _ | sz == 0 = pure old
 deAllocateEntityId (FreshEntityId sz highestId arr indArr) (EntityId eid) = do
   -- lookup where in the id array the id to deallocate is
-  eidInd <- readByteArray @Int32 indArr eid
+  eidInd <- readByteArray @Int32 indArr (fromIntegral $ get @"eid" eid)
 
   -- special case: Deallocating the last allocated id simply decreases the size counter
-  unless (fromIntegral eidInd == sz - 1) $ do
+  unless (eidInd == fromIntegral (sz - 1)) $ do
     -- get the last allocated id (at the end of the array by construction. See allocate)
-    lastActive <- readByteArray @Int32 arr (sz - 1)
+    lastActive <- readByteArray @Int arr (sz - 1)
 
     -- swap the id to deallocate with the last allocated id
     -- This now means the id we deallocate is at the end of all allocated ids (and before previously freed ids) 
-    writeByteArray @Int32 arr (fromIntegral eidInd) lastActive 
-    writeByteArray @Int32 arr (sz - 1) (fromIntegral eid)
+    writeByteArray @Int arr (fromIntegral eidInd) lastActive 
+    writeByteArray @Int arr (sz - 1) (unwrap eid)
 
     -- also swap the places in the index array to keep it up to date
-    writeByteArray @Int32 indArr (fromIntegral lastActive) eidInd 
-    writeByteArray @Int32 indArr eid (fromIntegral $ sz - 1)
+    writeByteArray @Int32 indArr (fromIntegral $ get @"eid" (Bitfield @Int @Entity lastActive)) eidInd 
+    writeByteArray @Int32 indArr (fromIntegral $ get @"eid" eid) (fromIntegral $ sz - 1)
 
   -- decrement the size
   pure $ FreshEntityId (sz - 1) highestId arr indArr
@@ -106,11 +112,24 @@ data FreshEntityId where
   FreshEntityId ::
        {-# UNPACK #-} !Int -- current number of allocated ids
     -> {-# UNPACK #-} !Int -- highest ever allocated id
-    -> {-# UNPACK #-} !(MutableByteArray RealWorld) -- array containing all allocated and freed ids
-    -> {-# UNPACK #-} !(MutableByteArray RealWorld) -- maps where in the above array an id is
+    -> {-# UNPACK #-} !(MutableByteArray RealWorld) -- 64 bits. array containing all allocated and freed ids
+    -> {-# UNPACK #-} !(MutableByteArray RealWorld) -- 32 bits. maps where in the above array an id is
     -> FreshEntityId
 
--- The implementation limits the entity ids to 32 bits, but since we reuse them, that should not be a problem
-newtype EntityId = EntityId { unEntityId :: Int }
+newtype EntityId = EntityId { unEntityId :: Bitfield Int Entity }
   deriving stock Show
-  deriving newtype (Eq, Storable, HashKey)
+  deriving newtype Eq
+  deriving (Storable, HashKey) via Int
+
+data Entity = Entity {
+  eid        :: Int32
+, generation :: Int16
+, pad        :: Int8
+, tag        :: Bitfield Int8 EntityTag
+}
+  deriving stock (Show, Generic)
+
+data EntityTag = EntityTag {
+  isRelation :: Bool
+}
+  deriving stock (Show, Generic)

@@ -27,7 +27,7 @@ import Hecs.Filter.Internal hiding (getColumnWithId, iterateArchetype, getEntity
 import qualified Hecs.Filter.Internal
 import Hecs.World.Internal
 import Hecs.Component.Internal
-import Hecs.Entity.Internal
+import Hecs.Entity.Internal (EntityId)
 
 import Data.Proxy
 import GHC.TypeLits

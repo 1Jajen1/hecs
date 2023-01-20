@@ -4,6 +4,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UnliftedDatatypes #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ViewPatterns #-}
 module Hecs.Archetype.Internal (
   ArchetypeEdge(..)
 , Archetype(..)
@@ -26,6 +27,8 @@ module Hecs.Archetype.Internal (
 , addEntity
 , hasTag
 , addTagType
+, showSzs
+, getNumEntities
 ) where
 
 import Hecs.Component.Internal
@@ -33,12 +36,14 @@ import Hecs.Entity.Internal ( EntityId(..) )
 import qualified Hecs.HashTable.Boxed as HTB
 import Hecs.HashTable.HashKey
 
+import GHC.Int
 import GHC.Exts
 import GHC.IO
 import Foreign.Storable
 import Unsafe.Coerce (unsafeCoerce)
 import Data.Proxy
 import Data.IORef
+import Data.Bitfield
 
 -- TODO This whole file needs a rework once done
 -- TODO Add a custom allocator for the pinned aligned column arrays. This is to combat fragmentation
@@ -57,8 +62,11 @@ data Archetype = Archetype {
 getTy :: Archetype -> ArchetypeTy
 getTy Archetype{componentTyB, componentTyF, componentTyT} = ArchetypeTy componentTyB componentTyF componentTyT 
 
--- getNumEntities :: Archetype -> IO Int
--- getNumEntities (Archetype{columns = Columns# szRef _ _ _ _}) = IO $ \s -> case readIntArray# szRef 0# s of (# s1, i #) -> (# s1, I# i #) 
+getNumEntities :: Archetype -> IO (Int, Int)
+getNumEntities (Archetype{columns = Columns# szRef eidRef _ _ _}) = IO $ \s ->
+  case readIntArray# szRef 0# s of
+    (# s1, i #) -> case readMutVar# eidRef s1 of
+      (# s2, arr #) -> (# s2, (I# i, I# (sizeofMutableByteArray# arr)) #) 
 
 -- This is a monoid?
 data ArchetypeTy = ArchetypeTy ComponentType# ComponentType# ComponentType#
@@ -133,7 +141,7 @@ hashComponentType (ComponentType# arr) = HashFn $ \i -> go 0# i
 {-# INLINE hashComponentType #-}
 
 addComponent :: ComponentType# -> ComponentId c -> State# RealWorld -> (# State# RealWorld, ComponentType#, Int# #)
-addComponent (ComponentType# arr) (ComponentId (EntityId (I# i))) s0 =
+addComponent (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) s0 =
   case newByteArray# (bSz +# 8#) s0 of
     (# s1, mar #) -> case go mar 0# s1 of
       (# s2, ind #) -> case writeIntArray# mar ind i s2 of
@@ -151,7 +159,7 @@ addComponent (ComponentType# arr) (ComponentId (EntityId (I# i))) s0 =
   
 -- Linear search for the component. Maybe instead use a (storable) hashtable? 
 indexComponent# :: ComponentType# -> ComponentId c -> (Int# -> r) -> r -> r
-indexComponent# (ComponentType# arr) (ComponentId (EntityId (I# i))) s f = go 0#
+indexComponent# (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) s f = go 0#
   where
     sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
     go n | isTrue# (n >=# sz) = f
@@ -173,23 +181,24 @@ data Columns# :: UnliftedType where
        MutableByteArray# RealWorld                                -- used rows
     -> MutVar# RealWorld (MutableByteArray# RealWorld)            -- Entitiy ids
     -> SmallMutableArray# RealWorld (MutableArray# RealWorld Any) -- array of boxed component arrays
-    -> ColumnSizes#                                               -- Bytesizes of the following components
+    -> ColumnSizes#                                               -- Bytesizes and alignment of the following components
     -> SmallMutableArray# RealWorld (MutableByteArray# RealWorld) -- array of unboxed component arrays
     -> Columns#
 
 newtype ColumnSizes# = ColumnSizes# ByteArray#
 
--- showSzs :: ColumnSizes# -> String
--- showSzs (ColumnSizes# arr) = showTy (ComponentType# arr)
+showSzs :: ColumnSizes# -> String
+showSzs (ColumnSizes# arr) = showTy (ComponentType# arr)
 
-addColumnSize :: Int -> Int -> ColumnSizes# -> State# RealWorld -> (# State# RealWorld, ColumnSizes# #)
-addColumnSize (I# at) (I# bSz) (ColumnSizes# szs) s0 =
-  case newByteArray# (sz +# 8#) s0 of
-    (# s1, mar #) -> case writeIntArray# mar at bSz s1 of
-      s2 -> case copyByteArray# szs 0# mar 0# (at *# 8#) s2 of -- TODO Double check bounds
-        s3 -> case copyByteArray# szs (at *# 8#) mar (at *# 8# +# 8#) (sz -# at *# 8#) s3 of -- TODO Double check bounds
-          s4 -> case unsafeFreezeByteArray# mar s4 of
-            (# s5, newArr #) -> (# s5, ColumnSizes# newArr #)
+addColumnSize :: Int -> Int -> Int -> ColumnSizes# -> State# RealWorld -> (# State# RealWorld, ColumnSizes# #)
+addColumnSize (I# at) (I# bSz) (I# bAl) (ColumnSizes# szs) s0 =
+  case newByteArray# (sz +# 16#) s0 of
+    (# s1, mar #) -> case writeIntArray# mar (at *# 2#) bSz s1 of
+      s2 -> case writeIntArray# mar (at *# 2# +# 1#) bAl s2 of
+        s3 -> case copyByteArray# szs 0# mar 0# (at *# 16#) s3 of -- TODO Double check bounds
+          s4 -> case copyByteArray# szs (at *# 16#) mar (at *# 16# +# 16#) (sz -# at *# 16#) s4 of -- TODO Double check bounds
+            s5 -> case unsafeFreezeByteArray# mar s5 of
+              (# s6, newArr #) -> (# s6, ColumnSizes# newArr #)
   where
     sz = sizeofByteArray# szs
 
@@ -244,7 +253,7 @@ writeComponent p = backing p
   (\aty row col el -> writeStorableComponent @(Value a) aty row col (coerce el))
 {-# INLINE writeComponent #-}
 
-writeStorableComponent :: Storable a => Archetype -> Int -> Int -> a -> IO ()
+writeStorableComponent :: forall a . Storable a => Archetype -> Int -> Int -> a -> IO ()
 writeStorableComponent Archetype{columns = Columns# _ _ _ _ arrs} row (I# column) el = IO $ \s0 ->
   case readSmallArray# arrs column s0 of
     (# s1, colArr #) -> case pokeElemOff (Ptr (mutableByteArrayContents# colArr)) row el of
@@ -259,7 +268,7 @@ writeBoxedComponent Archetype{columns = Columns# _ _ arrs _ _} (I# row) (I# colu
 {-# INLINE writeBoxedComponent #-}
 
 hasTag :: Archetype -> ComponentId c -> (Int -> r) -> r -> r
-hasTag Archetype{componentTyF} compId s = indexComponent# componentTyF compId (\i -> s (I# i))
+hasTag Archetype{componentTyT} compId s = indexComponent# componentTyT compId (\i -> s (I# i))
 {-# INLINE hasTag #-}
 
 lookupComponent :: forall c r . Component c => Archetype -> ComponentId c -> (Int -> r) -> r -> r
@@ -275,9 +284,8 @@ getColumn p (Archetype{columns = Columns# _ _ boxed _ unboxed}) (I# col) = backi
 {-# INLINE getColumn #-}
 
 grow :: Columns# -> State# RealWorld -> State# RealWorld
-grow (Columns# _ eids boxed _ unboxed) s = case copyUnboxed 0# (copyBoxed 0# s) of
+grow (Columns# _ eids boxed (ColumnSizes# szs) unboxed) s = case copyUnboxed 0# (copyBoxed 0# s) of
   s1 -> case readMutVar# eids s1 of
-    -- TODO alignment
     (# s2, eidarr #) -> case newByteArray# (2# *# sizeofMutableByteArray# eidarr) s2 of
       (# s3, newarr #) -> case copyMutableByteArray# eidarr 0# newarr 0# (sizeofMutableByteArray# eidarr) s3 of
         s4 -> writeMutVar# eids newarr s4
@@ -285,11 +293,11 @@ grow (Columns# _ eids boxed _ unboxed) s = case copyUnboxed 0# (copyBoxed 0# s) 
     copyUnboxed n s0 | isTrue# (n >=# numUnboxed) = s0
     copyUnboxed n s0 =
       case readSmallArray# unboxed n s0 of
-        -- TODO alignment
-        (# s1, arr #) -> case newPinnedByteArray# (2# *# sizeofMutableByteArray# arr) s1 of
+        (# s1, arr #) -> case newAlignedPinnedByteArray# (2# *# sizeofMutableByteArray# arr) bAl s1 of
           (# s2, newArr #) -> case copyMutableByteArray# arr 0# newArr 0# (sizeofMutableByteArray# arr) s2 of
             s3 -> case writeSmallArray# unboxed n newArr s3 of
               s4 -> copyUnboxed (n +# 1#) s4
+      where bAl = indexIntArray# szs ((n *# 2#) +# 1#)
     copyBoxed n s0 | isTrue# (n >=# numBoxed) = s0
     copyBoxed n s0 =
       case readSmallArray# boxed n s0 of
@@ -325,7 +333,7 @@ createArchetype (ArchetypeTy boxedTy unboxedTy tagTy) szs = do
 
 -- Only for the empty archetype really ...
 addEntity :: Archetype -> EntityId -> IO Int
-addEntity Archetype{columns = c@(Columns# szRef eidRefs _ _ _)} (EntityId (I# eid)) = IO $ \s0 ->
+addEntity Archetype{columns = c@(Columns# szRef eidRefs _ _ _)} (EntityId (Bitfield (I# eid))) = IO $ \s0 ->
   case readIntArray# szRef 0# s0 of
     (# s1, sz #) -> case readMutVar# eidRefs s1 of
       (# s2, eidArr #) -> case (if isTrue# (sz >=# uncheckedIShiftRL# (sizeofMutableByteArray# eidArr) 3#)
@@ -345,15 +353,15 @@ moveEntity srcAty (I# row) (I# newColumn) dstAty = IO $ \s ->
         then grow (columns dstAty) s2
         else s2) of
           s3 -> case readIntArray# srcSzRef 0# s3 of
-            (# s4, srcSz #) -> case moveEntity' srcAty (srcSz -# 1#) row newColumn dstAty dstSz s4 of
-              s5 -> case writeIntArray# dstSzRef 0# (dstSz +# 1#) s5 of
-                s6 -> case writeIntArray# srcSzRef 0# (srcSz -# 1#) s6 of
-                  s7 -> case readMutVar# srcEids s7 of
-                    (# s8, srcEidArr #) -> case readMutVar# dstEids s8 of
-                      (# s9, dstEidArr #) -> case copyMutableByteArray# srcEidArr (row *# 8#) dstEidArr (dstSz *# 8#) 8# s9 of
-                        s10 -> case copyMutableByteArray# srcEidArr (8# *# (srcSz -# 1#)) srcEidArr (row *# 8#) 8# s10 of
-                          s11 -> case readIntArray# srcEidArr row s11 of
-                            (# s12, movedEid #) -> (# s12, (I# dstSz, EntityId (I# movedEid)) #)
+            (# s4, srcSz #) -> case writeIntArray# dstSzRef 0# (dstSz +# 1#) s4 of
+              s5 -> case writeIntArray# srcSzRef 0# (srcSz -# 1#) s5 of
+                s6 -> case readMutVar# srcEids s6 of
+                  (# s7, srcEidArr #) -> case readMutVar# dstEids s7 of
+                    (# s8, dstEidArr #) -> case copyMutableByteArray# srcEidArr (row *# 8#) dstEidArr (dstSz *# 8#) 8# s8 of
+                      s9 -> case copyMutableByteArray# srcEidArr (8# *# (srcSz -# 1#)) srcEidArr (row *# 8#) 8# s9 of
+                        s10 -> case readIntArray# srcEidArr row s10 of
+                          (# s11, movedEid #) ->
+                            (# moveEntity' srcAty (srcSz -# 1#) row newColumn dstAty dstSz s11, (I# dstSz, EntityId $ Bitfield (I# movedEid)) #)
   where
     !(Columns# srcSzRef srcEids _ _ _) = columns srcAty
     !(Columns# dstSzRef dstEids _ _ _) = columns dstAty
@@ -381,11 +389,11 @@ moveEntity' srcAty srcLast row newColumn dstAty newRow s0 = copyUnboxed 0# 0# (c
           (# s1, srcArr #) -> case readSmallArray# dstUnboxed m s1 of
               (# s3, dstArr #) ->
                 copyUnboxed (n +# 1#) (m +# 1#)
-                  (copyMutableByteArray# srcArr (srcLast *# bSz) srcArr (row *# bSz) bSz -- copy last into our slot
-                    (copyMutableByteArray# srcArr (row *# bSz) dstArr (newRow *# bSz) bSz s3) -- copy into destination
+                  ( copyMutableByteArray# srcArr (srcLast *# bSz) srcArr (row *# bSz) bSz
+                    (copyMutableByteArray# srcArr (row *# bSz) dstArr (newRow *# bSz) bSz s3)
                   )
       where
-        bSz = indexIntArray# srcSzs n
+        bSz = indexIntArray# srcSzs (n *# 2#)
 
     !(Columns# _ _ srcBoxed (ColumnSizes# srcSzs) srcUnboxed) = columns srcAty
     !(Columns# _ _ dstBoxed _ dstUnboxed) = columns dstAty
@@ -402,13 +410,13 @@ newColumns initCap numBoxed numUnboxed (ColumnSizes# szs) s0 =
     (# s1, szRef #) -> case newArray# initCap (error "Hecs.Archetype.Internal:newColumns placeholder") s1 of
       (# s2, arr #) -> case newSmallArray# numBoxed arr s2 of
         (# s3, boxed #) -> case fillBoxed boxed 0# s3 of
-          s4 -> case newSmallArray# numUnboxed szRef s4 of
-            (# s5, unboxed #) -> case fillUnboxed unboxed 0# s5 of
-              -- TODO alignment?
-              s6 -> case newByteArray# (initCap *# 8#) s6 of
-                (# s7, eidArr #) -> case newMutVar# eidArr s7 of
-                  (# s8, eidRef #) -> case writeIntArray# szRef 0# 0# s8 of
-                    s9 -> (# s9, Columns# szRef eidRef boxed (ColumnSizes# szs) unboxed #)
+          s4 -> case newByteArray# 0# s4 of
+            (# s5, mar #) -> case newSmallArray# numUnboxed mar s5 of
+              (# s6, unboxed #) -> case fillUnboxed unboxed 0# s6 of
+                s7 -> case newByteArray# (initCap *# 8#) s7 of
+                  (# s8, eidArr #) -> case newMutVar# eidArr s8 of
+                    (# s9, eidRef #) -> case writeIntArray# szRef 0# 0# s9 of
+                      s10 -> (# s10, Columns# szRef eidRef boxed (ColumnSizes# szs) unboxed #)
   where
     fillBoxed _ n s | isTrue# (n >=# numBoxed) = s
     fillBoxed sarr n s =
@@ -416,8 +424,8 @@ newColumns initCap numBoxed numUnboxed (ColumnSizes# szs) s0 =
         (# s1, arr #) -> fillBoxed sarr (n +# 1#) (writeSmallArray# sarr n arr s1)
     fillUnboxed _ n s | isTrue# (n >=# numUnboxed) = s
     fillUnboxed sarr n s =
-      -- TODO alignment
-      case newPinnedByteArray# (initCap *# bSz) s of
+      case newAlignedPinnedByteArray# (initCap *# bSz) bAl s of
         (# s1, arr #) -> fillUnboxed sarr (n +# 1#) (writeSmallArray# sarr n arr s1)
       where
-        bSz = indexIntArray# szs n
+        bSz = indexIntArray# szs (n *# 2#)
+        bAl = indexIntArray# szs ((n *# 2#) +# 1#)
