@@ -1,7 +1,5 @@
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE TypeFamilyDependencies #-}
-{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ViewPatterns #-}
 module Hecs.Component.Relation (
@@ -14,7 +12,7 @@ import Data.Bits
 
 import Hecs.Component.Internal
 import Hecs.Entity.Internal
-import Hecs.Filter.Internal (Wrap)
+import Hecs.Filter.Internal (Tag)
 import Data.Proxy
 import Foreign.Storable
 import Data.Void
@@ -50,7 +48,7 @@ type CaseTag :: k -> x -> x -> x
 type family CaseTag a b c
 
 type instance CaseTag (Rel l r) a b = CaseTag l (CaseTag r a b) b
-type instance CaseTag (Wrap x) a _ = a
+type instance CaseTag (Tag x) a _ = a
 
 type ClassContext ctx l r =
   Switch (CaseTag l True False) (CaseTag r True False)

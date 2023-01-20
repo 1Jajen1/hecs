@@ -14,7 +14,7 @@ module Hecs.Filter (
 , getEntityColumn
 , TypedHas
 , iterateArchetype
-, And, Or, Not, Wrap
+, And, Or, Not, Tag
 , FilterDSL
 , filterDSL
 , FilterFromList
@@ -72,8 +72,8 @@ type family HasMain ty :: FilterContext where
   HasMain (And l r) = CombineCtx (HasMain l) (HasMain r)
   HasMain (Or l r) = CombineCtx (HasMain l) (HasMain r)
   HasMain (Not a) = InvertCtx (HasMain a)
-  HasMain (Wrap _) = HasMainId
-  HasMain (_::Type) = HasMainId
+  HasMain (Tag c) = HasMain c
+  HasMain c = HasMainId
 
 filterDSL :: forall {k} (w :: Type) (xs :: [k]) . FilterDSL w (FilterFromList xs) => Filter (FilterFromList xs) (HasMain (FilterFromList xs))
 filterDSL = filterDSLI (Proxy @w) (Proxy @(FilterFromList xs))
@@ -94,7 +94,7 @@ instance {-# OVERLAPPING #-} (FilterDSL w l, FilterDSL w r) => FilterDSL w (And 
   filterDSLI p _ = filterDSLI p (Proxy @l) .&&. filterDSLI p (Proxy @r) 
   {-# INLINE filterDSLI #-}
 
-instance {-# OVERLAPPING #-} (Has w (Wrap c), HasMain (Wrap c) ~ HasMainId) => FilterDSL w (Wrap c) where
+instance {-# OVERLAPPING #-} (Has w (Tag c), HasMain (Tag c) ~ HasMainId) => FilterDSL w (Tag c) where
   filterDSLI p _ = tag p
   {-# INLINE filterDSLI #-}
 

@@ -52,9 +52,9 @@ main = do
     getComponent @Int eid (pure . Just) (pure Nothing) >>= liftIO . print
     e2 <- newEntity
     addTag @Test e2
-    setComponent e2 (Rel @Color @(Wrap Red) Red)
+    setComponent e2 (Rel @Color @(Tag Red) Red)
     liftIO $ putStrLn "Set tag!"
-    getComponent @(Rel Color (Wrap Red)) e2 (pure . Just) (pure Nothing) >>= liftIO . print
+    getComponent @(Rel Color (Tag Red)) e2 (pure . Just) (pure Nothing) >>= liftIO . print
     setComponent @Int e2 100
     setComponent e2 (Pos 10 20 0)
     addTag @Red e2
@@ -70,7 +70,7 @@ main = do
       getComponent @Position car (liftIO . print) (pure ())
       freeEntity car
     liftIO $ putStrLn "Filter"
-    Hecs.filter (filterDSL @'[Int, Wrap Red, Or Boxed Position])
+    Hecs.filter (filterDSL @'[Int, Tag Red, Not (Tag Blue), Or Boxed Position])
       (\aty _ -> do
         x <- getColumn @Int aty
         es <- getEntityColumn aty

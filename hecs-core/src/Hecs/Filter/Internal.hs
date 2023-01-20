@@ -19,7 +19,7 @@ module Hecs.Filter.Internal (
 , iterateArchetype
 , TypedHas
 , getEntityColumn
-, And, Or, Not, Wrap
+, And, Or, Not, Tag
 ) where
 
 import Prelude hiding (not)
@@ -87,7 +87,7 @@ not (WithMain m f) = NotFilter m $ Prelude.not . f
 not (NotFilter m f) = WithMain m $ Prelude.not . f
 {-# INLINE not #-}
 
-data Wrap (x :: k)
+data Tag (x :: k)
 
 -- TODO 
 -- This has a small inefficiency: The main component id is guaranteed to be there, so no point in rechecking
@@ -132,6 +132,6 @@ type family TypedHasBool ty c :: Bool where
   TypedHasBool (And l r) c = TypedHasBool l c || TypedHasBool r c
   TypedHasBool (Or l r) c = False -- This is a bit annoying, but if we have an Or, we cannot conclusively say we have a component
   TypedHasBool (Not l) c = Data.Type.Bool.Not (TypedHasBool l c)
-  TypedHasBool (Wrap c) c = True
+  TypedHasBool (Tag c) c = True
   TypedHasBool c c = True
   TypedHasBool a b = False

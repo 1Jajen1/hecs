@@ -59,7 +59,7 @@ makeWorld wN names = do
       instance (Has $wCon l, Has $wCon r) => Has $wCon (Rel l r) where
         getComponentId _ = mkRelation (getComponentId (Proxy @($wCon))) (getComponentId (Proxy @($wCon)))
         {-# INLINE getComponentId #-}
-      instance Has $wCon x => Has $wCon (Wrap (x :: k)) where
+      instance Has $wCon x => Has $wCon (Tag (x :: k)) where
         getComponentId _ = coerce $ getComponentId @_ @_ @x (Proxy @($wCon))
         {-# INLINE getComponentId #-}
     |]
