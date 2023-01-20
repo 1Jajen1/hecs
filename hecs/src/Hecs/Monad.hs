@@ -44,6 +44,10 @@ instance (MonadBaseControl IO m, Core.WorldClass w) => MonadHecs w (HecsM w m) w
   {-# INLINE getComponentWithId #-}
   hasTagWithId eid compId = HecsM ask >>= \w -> Core.hasTagWithId w eid compId
   {-# INLINE hasTagWithId #-}
+  removeTagWithId eid compId = HecsM ask >>= \w -> Core.removeTagWithId w eid compId
+  {-# INLINE removeTagWithId #-}
+  removeComponentWithId eid compId = HecsM ask >>= \w -> Core.removeComponentWithId w eid compId
+  {-# INLINE removeComponentWithId #-}
   -- hasTagWithId eid compId = HecsM $ ask >>= \w -> liftBase $ Core.getComponentWithId w eid compId (const $ pure True) (pure False)
   filter :: forall b ty . Filter ty HasMainId -> (TypedArchetype ty -> b -> HecsM w m b) -> HecsM w m b -> HecsM w m b
   filter fi f z = HecsM ask >>= \w -> Core.forFilter w fi f z

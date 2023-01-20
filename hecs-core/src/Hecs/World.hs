@@ -9,6 +9,8 @@ module Hecs.World (
 , addTag, addTagWithId
 , addComponent, addComponentWithId
 , setComponent, setComponentWithId
+, removeTag, removeTagWithId
+, removeComponent, removeComponentWithId
 , WorldClass
 , WorldImpl
 , forFilter
@@ -72,6 +74,22 @@ setComponent w eid = setComponentWithId w eid (getComponentId @_ @_ @c (Proxy @w
 setComponentWithId :: forall c w m . (WorldClass w, Component c, MonadBase IO m) => w -> EntityId -> ComponentId c -> c -> m ()
 setComponentWithId w eid cid c = liftBase $ setComponentI w eid cid c
 {-# INLINE setComponentWithId #-}
+
+removeTag :: forall c w m . (WorldClass w, Has w c, MonadBase IO m) => w -> EntityId -> m ()
+removeTag w eid = removeTagWithId w eid (getComponentId @_ @_ @c (Proxy @w)) 
+{-# INLINE removeTag #-}
+
+removeTagWithId :: forall c w m . (WorldClass w, MonadBase IO m) => w -> EntityId -> ComponentId c -> m ()
+removeTagWithId w eid cid = liftBase $ removeTagI w eid cid
+{-# INLINE removeTagWithId #-}
+
+removeComponent :: forall c w m . (WorldClass w, Component c, Has w c, MonadBase IO m) => w -> EntityId -> m ()
+removeComponent w eid = removeComponentWithId w eid (getComponentId @_ @_ @c (Proxy @w))
+{-# INLINE removeComponent #-}
+
+removeComponentWithId :: forall c w m . (WorldClass w, Component c, MonadBase IO m) => w -> EntityId -> ComponentId c -> m ()
+removeComponentWithId w eid cid = liftBase $ removeComponentI w eid cid
+{-# INLINE removeComponentWithId #-}
 
 forFilter :: (WorldClass w, MonadBaseControl IO m) => w -> Filter ty HasMainId -> (TypedArchetype ty -> b -> m b) -> m b -> m b
 forFilter w fi f z = do

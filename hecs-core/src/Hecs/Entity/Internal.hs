@@ -15,7 +15,7 @@ import Control.Monad.Primitive
 
 import Data.Bits
 import Data.Bitfield.Internal
-import Data.Int
+import Data.Word
 import Data.Primitive.ByteArray
 
 import Foreign.Storable
@@ -54,7 +54,7 @@ allocateEntityId (FreshEntityId sz highestId arr indArr) = do
 
       -- add our new id to the end of the array and also set its index mapping
       writeByteArray @Int arr' highestId highestId     -- TODO Use pack here?
-      writeByteArray @Int32 indArr' highestId (fromIntegral highestId)
+      writeByteArray @Word32 indArr' highestId (fromIntegral highestId)
       -- increment the size and the highest ever id
       let st = FreshEntityId (sz + 1) (highestId + 1) arr' indArr'
       -- return the newly generated id
@@ -64,16 +64,21 @@ allocateEntityId (FreshEntityId sz highestId arr indArr) = do
       -- For details as to why freed ids are at the end of the array in the first place check
       --  the deallocate method
       reusedId <- Bitfield @Int @Entity <$> readByteArray arr sz
-      -- increment the size
-      let st = FreshEntityId (sz + 1) highestId arr indArr
-      -- return the reused id but increment the generation
-      pure (st, EntityId . pack $ Entity { eid = get @"eid" reusedId, generation = 1 + get @"generation" reusedId, pad = 0, tag = pack $ EntityTag False })
+      if get @"generation" reusedId == maxBound -- skip this entity forever. We cannot reliably reuse it anymore
+        then allocateEntityId (FreshEntityId (sz + 1) highestId arr indArr)
+        else do
+          let newEid = pack $ Entity { eid = get @"eid" reusedId, generation = 1 + get @"generation" reusedId, pad = 0, tag = pack $ EntityTag False }
+          writeByteArray arr sz (unwrap newEid)
+          -- increment the size
+          let st = FreshEntityId (sz + 1) highestId arr indArr
+          -- return the reused id but increment the generation
+          pure (st, EntityId newEid)
 
 deAllocateEntityId :: FreshEntityId -> EntityId -> IO FreshEntityId
 deAllocateEntityId old@(FreshEntityId sz _ _ _) _ | sz == 0 = pure old
 deAllocateEntityId (FreshEntityId sz highestId arr indArr) (EntityId eid) = do
   -- lookup where in the id array the id to deallocate is
-  eidInd <- readByteArray @Int32 indArr (fromIntegral $ get @"eid" eid)
+  eidInd <- readByteArray @Word32 indArr (fromIntegral $ get @"eid" eid)
 
   -- special case: Deallocating the last allocated id simply decreases the size counter
   unless (eidInd == fromIntegral (sz - 1)) $ do
@@ -86,8 +91,8 @@ deAllocateEntityId (FreshEntityId sz highestId arr indArr) (EntityId eid) = do
     writeByteArray @Int arr (sz - 1) (unwrap eid)
 
     -- also swap the places in the index array to keep it up to date
-    writeByteArray @Int32 indArr (fromIntegral $ get @"eid" (Bitfield @Int @Entity lastActive)) eidInd 
-    writeByteArray @Int32 indArr (fromIntegral $ get @"eid" eid) (fromIntegral $ sz - 1)
+    writeByteArray @Word32 indArr (fromIntegral $ get @"eid" (Bitfield @Int @Entity lastActive)) eidInd 
+    writeByteArray @Word32 indArr (fromIntegral $ get @"eid" eid) (fromIntegral $ sz - 1)
 
   -- decrement the size
   pure $ FreshEntityId (sz - 1) highestId arr indArr
@@ -122,14 +127,14 @@ newtype EntityId = EntityId { unEntityId :: Bitfield Int Entity }
   deriving (Storable, HashKey) via Int
 
 data Entity = Entity {
-  eid        :: Int32
-, generation :: Int16
-, pad        :: Int8
-, tag        :: Bitfield Int8 EntityTag
+  eid        :: {-# UNPACK #-} !Word32
+, generation :: {-# UNPACK #-} !Word16
+, pad        :: {-# UNPACK #-} !Word8
+, tag        :: {-# UNPACK #-} !(Bitfield Word8 EntityTag)
 }
   deriving stock (Show, Generic)
 
 data EntityTag = EntityTag {
-  isRelation :: Bool
+  isRelation :: !Bool
 }
   deriving stock (Show, Generic)

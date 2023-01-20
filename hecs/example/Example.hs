@@ -59,7 +59,8 @@ main = do
     setComponent e2 (Pos 10 20 0)
     addTag @Red e2
     hasTag @Red e2 >>= liftIO . print
-    void . replicateM 10000 $ do
+    removeTag @Red e2
+    void . replicateM 65537 $ do
       car <- newEntity
       liftIO $ print car
       setComponent @Int car 100
@@ -67,7 +68,8 @@ main = do
       addTag @Red car
       setComponent @Position car (Pos 10 0 50)
       getComponent @Position car (liftIO . print) (pure ())
-      pure ()
+      freeEntity car
+    liftIO $ putStrLn "Filter"
     Hecs.filter (filterDSL @'[Int, Wrap Red, Or Boxed Position])
       (\aty _ -> do
         x <- getColumn @Int aty

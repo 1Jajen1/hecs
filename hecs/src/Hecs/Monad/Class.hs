@@ -8,6 +8,8 @@ module Hecs.Monad.Class (
 , addTag
 , hasTag
 , addComponent
+, removeTag
+, removeComponent
 ) where
 
 import qualified Hecs.Entity.Internal as Core
@@ -31,6 +33,8 @@ class Monad m => MonadHecs (w :: Type) (m :: Type -> Type) | m -> w where
   setComponentWithId :: Core.Component c => Core.EntityId -> Core.ComponentId c -> c -> m ()
   getComponentWithId :: Core.Component c => Core.EntityId -> Core.ComponentId c -> (c -> m r) -> m r -> m r
   hasTagWithId :: forall {k} (c :: k) . Core.EntityId -> Core.ComponentId c -> m Bool
+  removeTagWithId :: Core.EntityId -> Core.ComponentId c -> m ()
+  removeComponentWithId :: Core.Component c => Core.EntityId -> Core.ComponentId c -> m ()
   filter :: Core.Filter ty Core.HasMainId -> (Core.TypedArchetype ty -> b -> m b) -> m b -> m b
   defer :: m a -> m a
   sync :: m ()
@@ -54,3 +58,11 @@ addTag eid = addTagWithId @_ @_ @c eid (Hecs.World.Internal.getComponentId @_ @_
 hasTag :: forall c w m . (MonadHecs w m, Core.Has w c) => Core.EntityId -> m Bool
 hasTag eid = hasTagWithId @w @m @c eid (Hecs.World.Internal.getComponentId (Proxy @w))
 {-# INLINE hasTag #-}
+
+removeTag :: forall c w m . (MonadHecs w m, Core.Has w c) => Core.EntityId -> m ()
+removeTag eid = removeTagWithId @w @m @c eid (Hecs.World.Internal.getComponentId (Proxy @w))
+{-# INLINE removeTag #-}
+
+removeComponent :: forall c w m . (MonadHecs w m, Core.Component c, Core.Has w c) => Core.EntityId -> m ()
+removeComponent eid = removeComponentWithId @w @m @c eid (Hecs.World.Internal.getComponentId (Proxy @w))
+{-# INLINE removeComponent #-}

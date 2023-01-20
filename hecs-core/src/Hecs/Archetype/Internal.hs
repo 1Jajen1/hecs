@@ -18,6 +18,8 @@ module Hecs.Archetype.Internal (
 , moveEntity
 , ArchetypeTy
 , addComponentType
+, removeComponentType
+, removeTagType
 , getTy
 , createArchetype
 , getColumnSizes
@@ -29,6 +31,8 @@ module Hecs.Archetype.Internal (
 , addTagType
 , showSzs
 , getNumEntities
+, removeEntity
+, removeColumnSize
 ) where
 
 import Hecs.Component.Internal
@@ -71,17 +75,17 @@ getNumEntities (Archetype{columns = Columns# szRef eidRef _ _ _}) = IO $ \s ->
 -- This is a monoid?
 data ArchetypeTy = ArchetypeTy ComponentType# ComponentType# ComponentType#
 
-iterateComponentIds :: ArchetypeTy -> (forall a . ComponentId a -> b -> IO b) -> IO b -> IO b
+iterateComponentIds :: ArchetypeTy -> (forall a . ComponentId a -> Int -> b -> IO b) -> IO b -> IO b
 iterateComponentIds (ArchetypeTy tyB tyF tyT) f z = iterateTy tyB f z >>= \b -> iterateTy tyF f (pure b) >>= \b1 -> iterateTy tyT f (pure b1)
 {-# INLINE iterateComponentIds #-}
 
-iterateTy :: ComponentType# -> (ComponentId Any -> b -> IO b) -> IO b -> IO b
+iterateTy :: ComponentType# -> (ComponentId Any -> Int -> b -> IO b) -> IO b -> IO b
 iterateTy (ComponentType# arr) f z = z >>= go 0# 
   where
     sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
     go n b
       | isTrue# (n >=# sz) = pure b
-      | otherwise = f (coerce $ I# (indexIntArray# arr n)) b >>= go (n +# 1#)
+      | otherwise = f (coerce $ I# (indexIntArray# arr n)) (I# n) b >>= go (n +# 1#)
 {-# INLINE iterateTy #-}
 
 instance Show ArchetypeTy where
@@ -120,6 +124,31 @@ addTagType (ArchetypeTy boxedTy unboxedTy tagTy) compId =
   IO $ \s -> case addComponent tagTy compId s of
     (# s1, newTagTy, ind #) -> (# s1, (ArchetypeTy boxedTy unboxedTy newTagTy, I# ind) #)
 {-# INLINE addTagType #-}
+
+removeComponentType :: forall c . Component c => Proxy c -> ArchetypeTy -> Int -> IO ArchetypeTy
+removeComponentType p (ArchetypeTy boxedTy unboxedTy tagTy) col =
+  backing p
+    (IO $ \s -> case removeComponent boxedTy col s of
+      (# s1, newBoxedTy #) -> (# s1, ArchetypeTy newBoxedTy unboxedTy tagTy #))
+    (IO $ \s -> case removeComponent unboxedTy col s of
+      (# s1, newUnboxedTy #) -> (# s1, ArchetypeTy boxedTy newUnboxedTy tagTy #))
+{-# INLINE removeComponentType #-}
+
+removeTagType :: ArchetypeTy -> Int -> IO ArchetypeTy
+removeTagType (ArchetypeTy boxedTy unboxedTy tagTy) col =
+  IO $ \s -> case removeComponent tagTy col s of
+    (# s1, newTagTy #) -> (# s1, ArchetypeTy boxedTy unboxedTy newTagTy #)
+{-# INLINE removeTagType #-}
+
+removeComponent :: ComponentType# -> Int -> State# RealWorld -> (# State# RealWorld, ComponentType# #)
+removeComponent (ComponentType# arr) (I# col) s0 =
+  case newByteArray# (bSz -# 8#) s0 of
+    (# s1, newArr #) -> case copyByteArray# arr 0# newArr 0# (col *# 8#) s1 of
+      s2 -> case copyByteArray# arr ((col *# 8#) +# 8#) newArr (col *# 8#) (bSz -# 8# -# (col *# 8#)) s2 of
+        s3 -> case unsafeFreezeByteArray# newArr s3 of (# s4, bar #) -> (# s4, ComponentType# bar #)
+  where
+    bSz = sizeofByteArray# arr
+{-# INLINE removeComponent #-}
 
 newtype ComponentType# = ComponentType# ByteArray#
 
@@ -199,6 +228,15 @@ addColumnSize (I# at) (I# bSz) (I# bAl) (ColumnSizes# szs) s0 =
           s4 -> case copyByteArray# szs (at *# 16#) mar (at *# 16# +# 16#) (sz -# at *# 16#) s4 of -- TODO Double check bounds
             s5 -> case unsafeFreezeByteArray# mar s5 of
               (# s6, newArr #) -> (# s6, ColumnSizes# newArr #)
+  where
+    sz = sizeofByteArray# szs
+
+removeColumnSize :: Int -> ColumnSizes# -> State# RealWorld -> (# State# RealWorld, ColumnSizes# #)
+removeColumnSize (I# at) (ColumnSizes# szs) s0 =
+  case newByteArray# (sz -# 16#) s0 of
+    (# s1, newArr #) -> case copyByteArray# szs 0# newArr 0# (at *# 16#) s1 of
+      s2 -> case copyByteArray# szs ((at *# 16#) +# 16#) newArr (at *# 16#) (sz -# 16# -# (at *# 16#)) s2 of
+        s3 -> case unsafeFreezeByteArray# newArr s3 of (# s4, bar #) -> (# s4, ColumnSizes# bar #)
   where
     sz = sizeofByteArray# szs
 
@@ -344,9 +382,45 @@ addEntity Archetype{columns = c@(Columns# szRef eidRefs _ _ _)} (EntityId (Bitfi
               s5 -> case writeIntArray# szRef 0# (sz +# 1#) s5 of
                 s6 -> (# s6, I# sz #)
 
+removeEntity :: Archetype -> Int -> IO EntityId
+removeEntity aty@Archetype{columns = Columns# szRef eidRefs _ _ _} (I# row) = IO $ \s0 ->
+  case readIntArray# szRef 0# s0 of
+    (# s1, sz #) -> case readMutVar# eidRefs s1 of
+      (# s2, eidArr #) -> case readIntArray# eidArr (sz -# 1#) s2 of
+        (# s3, moved #) -> case writeIntArray# eidArr row moved s3 of
+          s4 -> case writeIntArray# szRef 0# (sz -# 1#) s4 of
+            s5 -> case removeEntity' aty (sz -# 1#) row s5 of
+              s6 -> (# s6, coerce (I# moved) #)
+
+removeEntity' :: Archetype -> Int# -> Int# -> State# RealWorld -> State# RealWorld  
+removeEntity' aty lastI row s0 = copyUnboxed 0# (copyBoxed 0# s0)
+  where
+    -- TODO Don't copy around ourselves (row == srcLast) in boxed components because that also leaves gc refs...
+    copyBoxed n s
+      | isTrue# (n >=# numBoxed) = s
+      | otherwise =
+        case readSmallArray# boxed n s of
+          (# s1, srcArr #) -> case readArray# srcArr lastI s1 of
+              (# s2, lastEl #) -> copyBoxed (n +# 1#)
+                ( writeArray# srcArr lastI (error "Hecs.Internal.Archetype.removeEntity' placeholder")
+                  (writeArray# srcArr row lastEl s2)
+                )
+
+    copyUnboxed n s
+      | isTrue# (n >=# numUnboxed) = s
+      | otherwise =
+        case readSmallArray# unboxed n s of
+          (# s1, srcArr #) -> copyUnboxed (n +# 1#)
+            (copyMutableByteArray# srcArr (lastI *# bSz) srcArr (row *# bSz) bSz s1)
+      where
+        bSz = indexIntArray# szs (n *# 2#)
+    !(Columns# _ _ boxed (ColumnSizes# szs) unboxed) = columns aty
+    numBoxed = sizeofSmallMutableArray# boxed
+    numUnboxed = sizeofSmallMutableArray# unboxed
+
 -- Assumption: dstAty has exactly one additional component and it is at newColumn index
 moveEntity :: Archetype -> Int -> Int -> Archetype -> IO (Int, EntityId)
-moveEntity srcAty (I# row) (I# newColumn) dstAty = IO $ \s ->
+moveEntity srcAty (I# row) (I# skipColumn) dstAty = IO $ \s ->
   case readIntArray# dstSzRef 0# s of
     (# s1, dstSz #) -> case readCap s1 of
       (# s2, dstCap #) -> case (if isTrue# (dstSz >=# dstCap)
@@ -361,29 +435,34 @@ moveEntity srcAty (I# row) (I# newColumn) dstAty = IO $ \s ->
                       s9 -> case copyMutableByteArray# srcEidArr (8# *# (srcSz -# 1#)) srcEidArr (row *# 8#) 8# s9 of
                         s10 -> case readIntArray# srcEidArr row s10 of
                           (# s11, movedEid #) ->
-                            (# moveEntity' srcAty (srcSz -# 1#) row newColumn dstAty dstSz s11, (I# dstSz, EntityId $ Bitfield (I# movedEid)) #)
+                            (# moveEntity' srcAty (srcSz -# 1#) row skipColumn dstAty dstSz s11, (I# dstSz, EntityId $ Bitfield (I# movedEid)) #)
   where
     !(Columns# srcSzRef srcEids _ _ _) = columns srcAty
     !(Columns# dstSzRef dstEids _ _ _) = columns dstAty
     readCap s = case readMutVar# dstEids s of (# s1, arr #) -> (# s1, uncheckedIShiftRL# (sizeofMutableByteArray# arr) 3# #)
 
 moveEntity' :: Archetype -> Int# -> Int# -> Int# -> Archetype -> Int# -> State# RealWorld -> State# RealWorld
-moveEntity' srcAty srcLast row newColumn dstAty newRow s0 = copyUnboxed 0# 0# (copyBoxed 0# 0# s0)
+moveEntity' srcAty srcLast row skipColumn dstAty newRow s0 = copyUnboxed 0# 0# (copyBoxed 0# 0# s0)
   where
     -- TODO Don't copy around ourselves (row == srcLast) in boxed components because that also leaves gc refs...
     copyBoxed n m s
       | isTrue# (n >=# srcNumBoxed) = s
-      | newInBoxed && isTrue# (m ==# newColumn) = copyBoxed n (m +# 1#) s
+      | changedBoxed && isTrue# (m ==# skipColumn) = copyBoxed n (m +# 1#) s
       | otherwise =
         case readSmallArray# srcBoxed n s of
           (# s1, srcArr #) -> case readArray# srcArr row s1 of
             (# s2, el #) -> case readArray# srcArr srcLast s2 of
-              (# s3, lastEl #) -> case readSmallArray# dstBoxed m (writeArray# srcArr row lastEl s3) of
-                (# s4, dstArr #) -> copyBoxed (n +# 1#) (m +# 1#) (writeArray# dstArr newRow el s4)
+              (# s3, lastEl #) -> case readSmallArray# dstBoxed m s3 of
+                (# s4, dstArr #) -> copyBoxed (n +# 1#) (m +# 1#)
+                  ( writeArray# srcArr row lastEl
+                    ( writeArray# srcArr srcLast (error "Hecs.Internal.Archetype.removeEntity' placeholder")
+                      (writeArray# dstArr newRow el s4)
+                    )
+                  )
 
     copyUnboxed n m s
       | isTrue# (n >=# srcNumUnboxed) = s
-      | newInUnboxed && isTrue# (m ==# newColumn) = copyUnboxed n (m +# 1#) s
+      | changedUnboxed && isTrue# (m ==# skipColumn) = copyUnboxed n (m +# 1#) s
       | otherwise =
         case readSmallArray# srcUnboxed n s of
           (# s1, srcArr #) -> case readSmallArray# dstUnboxed m s1 of
@@ -401,8 +480,8 @@ moveEntity' srcAty srcLast row newColumn dstAty newRow s0 = copyUnboxed 0# 0# (c
     dstNumBoxed = sizeofSmallMutableArray# dstBoxed
     srcNumUnboxed = sizeofSmallMutableArray# srcUnboxed
     dstNumUnboxed = sizeofSmallMutableArray# dstUnboxed
-    newInBoxed = not $ isTrue# (srcNumBoxed ==# dstNumBoxed)
-    newInUnboxed = not $ isTrue# (srcNumUnboxed ==# dstNumUnboxed)
+    changedBoxed = not $ isTrue# (srcNumBoxed ==# dstNumBoxed)
+    changedUnboxed = not $ isTrue# (srcNumUnboxed ==# dstNumUnboxed)
 
 newColumns :: Int# -> Int# -> Int# -> ColumnSizes# -> State# RealWorld -> (# State# RealWorld, Columns# #) 
 newColumns initCap numBoxed numUnboxed (ColumnSizes# szs) s0 =
