@@ -10,6 +10,7 @@ module Hecs.Entity.Internal (
 , deAllocateEntityId
 , Entity(..)
 , EntityTag(..)
+, Relation(..)
 ) where
 
 import Control.Monad
@@ -138,12 +139,13 @@ data Entity = Entity {
 
 data Relation = Relation {
   first  :: {-# UNPACK #-} !Word32
-, second :: {-# UNPACK #-} !Word24
-, tag    :: {-# UNPACK #-} !(Bitfield Word8 EntityTag)    
+, second :: {-# UNPACK #-} !Word24 -- TODO
+, tag    :: {-# UNPACK #-} !(Bitfield Word8 EntityTag) 
 }
   deriving stock Generic
 
 newtype Word24 = Word24 Word
+  deriving newtype (Eq, Ord, Num, Enum, Real, Integral)
   deriving (HasFixedBitSize, AsRep r) via ViaIntegral 24 Word
 
 data EntityTag = EntityTag {

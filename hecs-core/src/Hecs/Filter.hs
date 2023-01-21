@@ -25,8 +25,9 @@ import Prelude hiding (not)
 
 import Hecs.Filter.Internal hiding (getColumnWithId, iterateArchetype, getEntityColumn)
 import qualified Hecs.Filter.Internal
-import Hecs.World.Internal
+import Hecs.World.Has
 import Hecs.Component.Internal
+import Hecs.Component.Relation
 import Hecs.Entity.Internal (EntityId)
 
 import Data.Proxy
@@ -35,11 +36,11 @@ import Data.Kind
 import Control.Monad.Base
 import Control.Monad.Trans.Control
 
-component :: forall c w . (Component c, Has w c) => Proxy w -> Filter c HasMainId
+component :: forall c w . (BranchRel c, Component c, Has w c) => Proxy w -> Filter c HasMainId
 component w = componentWithId $ getComponentId w
 {-# INLINE component #-}
 
-tag :: forall {k} (c :: k) (w :: Type) . Has w c => Proxy w -> Filter c HasMainId
+tag :: forall {k} (c :: k) (w :: Type) . (BranchRel c, Has w c) => Proxy w -> Filter c HasMainId
 tag w = tagWithId $ getComponentId w
 {-# INLINE tag #-}
 
@@ -98,6 +99,6 @@ instance {-# OVERLAPPING #-} (Has w (Tag c), HasMain (Tag c) ~ HasMainId) => Fil
   filterDSLI p _ = tag p
   {-# INLINE filterDSLI #-}
 
-instance {-# INCOHERENT #-} (Component c, Has w c, HasMain c ~ HasMainId) => FilterDSL w c where
+instance {-# INCOHERENT #-} (BranchRel c, Component c, Has w c, HasMain c ~ HasMainId) => FilterDSL w c where
   filterDSLI p _ = component p
   {-# INLINE filterDSLI #-}

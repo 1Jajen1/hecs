@@ -23,6 +23,7 @@ common common-options
                      , transformers-base
                      , monad-control
                      , bitfield
+                     , text
   
   ghc-options:         -Wall
                        -Wcompat
@@ -50,6 +51,7 @@ library
                       , Hecs.Archetype.Internal
                       , Hecs.Entity.Internal
                       , Hecs.World
+                      , Hecs.World.Has
                       , Hecs.World.Internal
                       , Hecs.World.TH
                       , Hecs.HashTable.Boxed
@@ -59,5 +61,6 @@ library
                       , Hecs.Component.Generic
                       , Hecs.Component.Internal
                       , Hecs.Component.Relation
+                      , Hecs.Component.Properties
                       , Hecs.Filter
                       , Hecs.Filter.Internal

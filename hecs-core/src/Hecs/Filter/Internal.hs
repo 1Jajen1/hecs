@@ -2,6 +2,9 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE UnboxedTuples #-}
+{-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE RoleAnnotations #-}
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 module Hecs.Filter.Internal (
   Filter(..)
@@ -27,6 +30,8 @@ import qualified Prelude
 
 import Hecs.Archetype.Internal hiding (empty)
 import Hecs.Component.Internal
+import Hecs.Component.Properties
+import Hecs.Component.Relation
 import Hecs.Entity.Internal
 
 import Data.Proxy
@@ -87,24 +92,48 @@ not (WithMain m f) = NotFilter m $ Prelude.not . f
 not (NotFilter m f) = WithMain m $ Prelude.not . f
 {-# INLINE not #-}
 
+type role Tag phantom
 data Tag (x :: k)
 
 -- TODO 
 -- This has a small inefficiency: The main component id is guaranteed to be there, so no point in rechecking
 -- but since we don't know who or what the main id is, we have no choice here
-componentWithId :: Component c => ComponentId c -> Filter c HasMainId
-componentWithId compId = WithMain (coerce compId) $ \aty -> lookupComponent aty compId (const True) False
+-- TODO Matching Rel Wildcard Wildcard ... (all relations)
+componentWithId :: forall c . (BranchRel c, Component c) => ComponentId c -> Filter c HasMainId
+componentWithId compId = WithMain (coerce compId) $ \aty ->
+  let rel = coerce @_ @(Bitfield Int Relation) compId
+      relFirst = coerce (fromIntegral @_ @Int rel.first)
+      relSecond = coerce (fromIntegral @_ @Int rel.second)
+  in branchRel (Proxy @c)
+    (if | relFirst == wildcard && relSecond == wildcard -> lookupWildcardB (Proxy @(ComponentKind c)) aty (const True) False
+        | relFirst == wildcard -> lookupWildcardL (Proxy @(ComponentKind c)) aty (coerce $ fromIntegral @_ @Int rel.second) (const True) False
+        | relSecond == wildcard -> lookupWildcardR (Proxy @(ComponentKind c)) aty (coerce $ fromIntegral @_ @Int rel.first) (const True) False
+        | otherwise -> lookupComponent (Proxy @(ComponentKind c)) aty compId (const True) False
+    )
+    (lookupComponent (Proxy @(ComponentKind c)) aty compId (const True) False)
 {-# INLINE componentWithId #-}
 
-tagWithId :: ComponentId c -> Filter c HasMainId
-tagWithId compId = WithMain (coerce compId) $ \aty -> hasTag aty compId (const True) False
+tagWithId :: forall c . BranchRel c => ComponentId c -> Filter c HasMainId
+tagWithId compId = WithMain (coerce compId) $ \aty ->
+  let rel = coerce @_ @(Bitfield Int Relation) compId
+      relFirst = coerce (fromIntegral @_ @Int rel.first)
+      relSecond = coerce (fromIntegral @_ @Int rel.second)
+      p = Proxy @Hecs.Component.Internal.Tag
+  in branchRel (Proxy @c)
+    (if | relFirst == wildcard && relSecond == wildcard -> lookupWildcardB p aty (const True) False
+        | relFirst == wildcard -> lookupWildcardL p aty compId (const True) False
+        | relSecond == wildcard -> lookupWildcardR p aty compId (const True) False
+        | otherwise -> lookupComponent p aty compId (const True) False
+    )
+    (lookupComponent p aty compId (const True) False)
 {-# INLINE tagWithId #-}
 
 newtype TypedArchetype ty = TypedArchetype Archetype
 
+-- TODO
 getColumnWithId :: forall c ty . (Component c, TypedHas ty c) => TypedArchetype ty -> ComponentId c -> IO (Column (ComponentKind c) c)
-getColumnWithId (TypedArchetype aty) compId = lookupComponent aty compId
-  (getColumn (Proxy @c) aty)
+getColumnWithId (TypedArchetype aty) compId = lookupComponent (Proxy @(ComponentKind c)) aty compId
+  (unsfeGetColumn (Proxy @(ComponentKind c)) aty)
   (error "Hecs.Filter.Internal:getColumn Component that was on the type level wasn't on the value level")
 {-# INLINE getColumnWithId #-}
 

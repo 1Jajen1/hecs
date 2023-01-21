@@ -6,6 +6,7 @@ module Hecs.Array (
 , size
 , writeBack
 , read
+, write
 ) where
 
 import Prelude hiding (read)
@@ -37,6 +38,10 @@ grow (Array# sz arr) = IO $ \s -> case newSmallArray# dCap (error "Hecs.Array.ne
 read :: Array a -> Int -> IO a
 read (Array# _ arr) (I# n) = IO (readSmallArray# arr n)
 {-# INLINE read #-}
+
+write :: Array a -> Int -> a -> IO ()
+write (Array# _ arr) (I# n) el = IO $ \s -> case writeSmallArray# arr n el s of s1 -> (# s1, () #)
+{-# INLINE write #-}
 
 writeBack :: Array a -> a -> IO (Array a)
 writeBack a@(Array# sz arr) el

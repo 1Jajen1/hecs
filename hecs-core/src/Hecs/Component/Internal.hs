@@ -12,7 +12,7 @@ module Hecs.Component.Internal (
 , ViaBox(..)
 , ViaFlat(..)
 , AccessColumn(..)
-, IsComponent(..)
+, KnownComponentType(..)
 ) where
 
 import Hecs.Entity.Internal
@@ -25,19 +25,32 @@ import Data.Int
 import Data.Word
 import GHC.IO (IO(IO))
 import Control.Monad.Base
-import Data.Typeable
 
 newtype ComponentId (c :: k) = ComponentId EntityId
   deriving newtype (Eq, Show, HashKey)
 
--- This is added to every instance of Component that is registered with TH
-data IsComponent where
-  IsComponent :: forall c . (Typeable c, Component c) => IsComponent
-  deriving Component via ViaBox IsComponent
+data ComponentType = Boxed | Flat | Tag
 
-data ComponentType = Boxed | Flat
+-- Can be used to branch on the component type without knowing the actual type.
+-- This is used to specialize functions that need to know the storage kind but not the type
+-- In turn this removes a lot of excessive inlining and the only orphan specialisation done
+--  by TH is for setting a component (to specialise the Storable constraint)
+class KnownComponentType (ty :: ComponentType) where
+  branchCompType :: Proxy ty -> (ty ~ Boxed => r) -> (ty ~ Flat => r) -> (ty ~ Tag => r) -> r
 
-class Coercible (Value c) c => Component c where
+instance KnownComponentType Boxed where
+  branchCompType _ a _ _ = a
+  {-# INLINE branchCompType #-}
+
+instance KnownComponentType Flat where
+  branchCompType _ _ b _ = b
+  {-# INLINE branchCompType #-}
+
+instance KnownComponentType Tag where
+  branchCompType _ _ _ c = c
+  {-# INLINE branchCompType #-}
+
+class (Coercible (Value c) c, KnownComponentType (ComponentKind c)) => Component c where
   type ComponentKind c :: ComponentType
   type Value c :: Type
   backing :: Proxy c -> (ComponentKind c ~ Boxed => r) -> ((ComponentKind c ~ Flat, Storable (Value c)) => r) -> r

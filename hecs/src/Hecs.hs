@@ -19,5 +19,6 @@ import Hecs.Monad.Class
 import Hecs.Entity.Internal
 import Hecs.Component
 import Hecs.World.TH
+import Hecs.World.Has
 import Hecs.World.Internal
 import Hecs.Filter hiding (filterDSL, getColumn, component)

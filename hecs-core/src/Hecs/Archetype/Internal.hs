@@ -5,6 +5,7 @@
 {-# LANGUAGE UnliftedDatatypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 module Hecs.Archetype.Internal (
   ArchetypeEdge(..)
 , Archetype(..)
@@ -19,24 +20,24 @@ module Hecs.Archetype.Internal (
 , ArchetypeTy
 , addComponentType
 , removeComponentType
-, removeTagType
 , getTy
 , createArchetype
 , getColumnSizes
 , addColumnSize
 , iterateComponentIds
-, getColumn
+, unsfeGetColumn
 , addEntity
-, hasTag
-, addTagType
 , showSzs
 , getNumEntities
 , removeEntity
 , removeColumnSize
+, lookupWildcardB
+, lookupWildcardL
+, lookupWildcardR
 ) where
 
 import Hecs.Component.Internal
-import Hecs.Entity.Internal ( EntityId(..) )
+import Hecs.Entity.Internal ( EntityId(..), Entity(..), EntityTag(..), Relation(..) )
 import qualified Hecs.HashTable.Boxed as HTB
 import Hecs.HashTable.HashKey
 
@@ -62,6 +63,10 @@ data Archetype = Archetype {
 , componentTyF :: ComponentType#
 , componentTyT :: ComponentType#
 }
+
+instance Eq Archetype where
+  l == r = getTy l == getTy r
+  {-# INLINE (==) #-}
 
 getTy :: Archetype -> ArchetypeTy
 getTy Archetype{componentTyB, componentTyF, componentTyT} = ArchetypeTy componentTyB componentTyF componentTyT 
@@ -110,35 +115,31 @@ instance HashKey ArchetypeTy where
   {-# INLINE hashKey #-}
   
 -- This does not need to be IO, many others don't need to either, move to arbitrary state and use ST?
-addComponentType :: forall c . Component c => ArchetypeTy -> ComponentId c -> IO (ArchetypeTy, Int)
-addComponentType (ArchetypeTy boxedTy unboxedTy tagTy) compId =
-  backing (Proxy @c)
+addComponentType :: forall c ty . KnownComponentType ty => Proxy ty -> ArchetypeTy -> ComponentId c -> IO (ArchetypeTy, Int)
+addComponentType ty (ArchetypeTy boxedTy unboxedTy tagTy) compId =
+  branchCompType ty
     (IO $ \s -> case addComponent boxedTy compId s of
       (# s1, newBoxedTy, ind #) -> (# s1, (ArchetypeTy newBoxedTy unboxedTy tagTy, I# ind) #))
     (IO $ \s -> case addComponent unboxedTy compId s of
       (# s1, newUnboxedTy, ind #) -> (# s1, (ArchetypeTy boxedTy newUnboxedTy tagTy, I# ind) #))
-{-# INLINE addComponentType #-}
+    (IO $ \s -> case addComponent tagTy compId s of
+      (# s1, newTagTy, ind #) -> (# s1, (ArchetypeTy boxedTy unboxedTy newTagTy, I# ind) #))
+{-# SPECIALISE addComponentType :: forall c . Proxy Boxed -> ArchetypeTy -> ComponentId c -> IO (ArchetypeTy, Int) #-}
+{-# SPECIALISE addComponentType :: forall c . Proxy Flat  -> ArchetypeTy -> ComponentId c -> IO (ArchetypeTy, Int) #-}
+{-# SPECIALISE addComponentType :: forall c . Proxy Tag   -> ArchetypeTy -> ComponentId c -> IO (ArchetypeTy, Int) #-}
 
-addTagType :: forall c . ArchetypeTy -> ComponentId c -> IO (ArchetypeTy, Int)
-addTagType (ArchetypeTy boxedTy unboxedTy tagTy) compId =
-  IO $ \s -> case addComponent tagTy compId s of
-    (# s1, newTagTy, ind #) -> (# s1, (ArchetypeTy boxedTy unboxedTy newTagTy, I# ind) #)
-{-# INLINE addTagType #-}
-
-removeComponentType :: forall c . Component c => Proxy c -> ArchetypeTy -> Int -> IO ArchetypeTy
-removeComponentType p (ArchetypeTy boxedTy unboxedTy tagTy) col =
-  backing p
+removeComponentType :: forall ty . KnownComponentType ty => Proxy ty -> ArchetypeTy -> Int -> IO ArchetypeTy
+removeComponentType ty (ArchetypeTy boxedTy unboxedTy tagTy) col =
+  branchCompType ty
     (IO $ \s -> case removeComponent boxedTy col s of
       (# s1, newBoxedTy #) -> (# s1, ArchetypeTy newBoxedTy unboxedTy tagTy #))
     (IO $ \s -> case removeComponent unboxedTy col s of
       (# s1, newUnboxedTy #) -> (# s1, ArchetypeTy boxedTy newUnboxedTy tagTy #))
-{-# INLINE removeComponentType #-}
-
-removeTagType :: ArchetypeTy -> Int -> IO ArchetypeTy
-removeTagType (ArchetypeTy boxedTy unboxedTy tagTy) col =
-  IO $ \s -> case removeComponent tagTy col s of
-    (# s1, newTagTy #) -> (# s1, ArchetypeTy boxedTy unboxedTy newTagTy #)
-{-# INLINE removeTagType #-}
+    (IO $ \s -> case removeComponent tagTy col s of
+      (# s1, newTagTy #) -> (# s1, ArchetypeTy boxedTy unboxedTy newTagTy #))
+{-# SPECIALISE removeComponentType :: Proxy Boxed -> ArchetypeTy -> Int -> IO ArchetypeTy #-}
+{-# SPECIALISE removeComponentType :: Proxy Flat  -> ArchetypeTy -> Int -> IO ArchetypeTy #-}
+{-# SPECIALISE removeComponentType :: Proxy Tag   -> ArchetypeTy -> Int -> IO ArchetypeTy #-}
 
 removeComponent :: ComponentType# -> Int -> State# RealWorld -> (# State# RealWorld, ComponentType# #)
 removeComponent (ComponentType# arr) (I# col) s0 =
@@ -195,6 +196,48 @@ indexComponent# (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) 
     go n | isTrue# (indexIntArray# arr n ==# i) = s n
     go n = go (n +# 1#)
 {-# INLINE indexComponent# #-}
+
+indexWildcardB# :: ComponentType# -> (Int# -> r) -> r -> r
+indexWildcardB# (ComponentType# arr) s f = go 0#
+  where
+    sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
+    go n
+      | isTrue# (n >=# sz) = f
+      | (Bitfield @Int @Entity (I# el)).tag.isRelation = s n
+      | otherwise = go (n +# 1#)
+      where
+        el = indexIntArray# arr n
+{-# INLINE indexWildcardB# #-}
+
+indexWildcardL# :: ComponentType# -> ComponentId c -> (Int# -> r) -> r -> r
+indexWildcardL# (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) s f = go 0#
+  where
+    sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
+    go n
+      | isTrue# (n >=# sz) = f
+      | isTrue# (el ==# i) = s n
+      | otherwise = go (n +# 1#)
+      where
+        el' = indexIntArray# arr n
+        el = if (Bitfield @Int @Entity (I# el')).tag.isRelation
+              then let !(I# sndId) = fromIntegral $ (Bitfield @Int @Relation (I# el')).second in sndId
+              else el'
+{-# INLINE indexWildcardL# #-}
+
+indexWildCardR# :: ComponentType# -> ComponentId c -> (Int# -> r) -> r -> r
+indexWildCardR# (ComponentType# arr) (ComponentId (EntityId (Bitfield (I# i)))) s f = go 0#
+  where
+    sz = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
+    go n
+      | isTrue# (n >=# sz) = f
+      | isTrue# (el ==# i) = s n
+      | otherwise = go (n +# 1#)
+      where
+        el' = indexIntArray# arr n
+        el = if (Bitfield @Int @Entity (I# el')).tag.isRelation
+              then let !(I# firstId) = fromIntegral $ (Bitfield @Int @Relation (I# el')).first in firstId
+              else el'
+{-# INLINE indexWildCardR# #-}
 
 numComponents :: ComponentType# -> Int#
 numComponents (ComponentType# arr) = uncheckedIShiftRL# (sizeofByteArray# arr) 3#
@@ -283,7 +326,6 @@ readBoxedComponent Archetype{columns = Columns# _ _ arrs _ _} (I# row) (I# colum
   case readSmallArray# arrs column s of
     (# s', colArr #) -> case readArray# colArr row s' of
       (# s'', a #) -> (# s'', unsafeCoerce a #)
-{-# INLINE readBoxedComponent #-}
 
 writeComponent :: forall a . Component a => Proxy a -> Archetype -> Int -> Int -> a -> IO ()
 writeComponent p = backing p
@@ -303,23 +345,40 @@ writeBoxedComponent Archetype{columns = Columns# _ _ arrs _ _} (I# row) (I# colu
   case readSmallArray# arrs column s0 of
     (# s1, colArr #) -> case writeArray# colArr row (unsafeCoerce el) s1 of
       s2 -> (# s2, () #)
-{-# INLINE writeBoxedComponent #-}
 
-hasTag :: Archetype -> ComponentId c -> (Int -> r) -> r -> r
-hasTag Archetype{componentTyT} compId s = indexComponent# componentTyT compId (\i -> s (I# i))
-{-# INLINE hasTag #-}
-
-lookupComponent :: forall c r . Component c => Archetype -> ComponentId c -> (Int -> r) -> r -> r
-lookupComponent = backing (Proxy @c)
+lookupComponent :: forall c ty r . KnownComponentType ty => Proxy ty -> Archetype -> ComponentId c -> (Int -> r) -> r -> r
+lookupComponent ty = branchCompType ty
   (\Archetype{componentTyB} compId s -> indexComponent# componentTyB compId (\i -> s (I# i)))
   (\Archetype{componentTyF} compId s -> indexComponent# componentTyF compId (\i -> s (I# i)))
+  (\Archetype{componentTyT} compId s -> indexComponent# componentTyT compId (\i -> s (I# i)))
 {-# INLINE lookupComponent #-}
 
-getColumn :: forall c . Component c => Proxy c -> Archetype -> Int -> IO (Column (ComponentKind c) c)
-getColumn p (Archetype{columns = Columns# _ _ boxed _ unboxed}) (I# col) = backing p
+lookupWildcardB :: forall ty r . KnownComponentType ty => Proxy ty -> Archetype -> (Int -> r) -> r -> r
+lookupWildcardB ty = branchCompType ty
+  (\Archetype{componentTyB} s -> indexWildcardB# componentTyB (\i -> s (I# i)))
+  (\Archetype{componentTyF} s -> indexWildcardB# componentTyF (\i -> s (I# i)))
+  (\Archetype{componentTyT} s -> indexWildcardB# componentTyT (\i -> s (I# i)))
+{-# INLINE lookupWildcardB #-}
+
+lookupWildcardL :: forall c ty r . KnownComponentType ty => Proxy ty -> Archetype -> ComponentId c -> (Int -> r) -> r -> r
+lookupWildcardL ty = branchCompType ty
+  (\Archetype{componentTyB} compId s -> indexWildcardL# componentTyB compId (\i -> s (I# i)))
+  (\Archetype{componentTyF} compId s -> indexWildcardL# componentTyF compId (\i -> s (I# i)))
+  (\Archetype{componentTyT} compId s -> indexWildcardL# componentTyT compId (\i -> s (I# i)))
+{-# INLINE lookupWildcardL #-}
+
+lookupWildcardR :: forall c ty r . KnownComponentType ty => Proxy ty -> Archetype -> ComponentId c -> (Int -> r) -> r -> r
+lookupWildcardR ty = branchCompType ty
+  (\Archetype{componentTyB} compId s -> indexWildCardR# componentTyB compId (\i -> s (I# i)))
+  (\Archetype{componentTyF} compId s -> indexWildCardR# componentTyF compId (\i -> s (I# i)))
+  (\Archetype{componentTyT} compId s -> indexWildCardR# componentTyT compId (\i -> s (I# i)))
+{-# INLINE lookupWildcardR #-}
+
+unsfeGetColumn :: forall c ty . KnownComponentType ty => Proxy ty -> Archetype -> Int -> IO (Column ty c)
+unsfeGetColumn ty (Archetype{columns = Columns# _ _ boxed _ unboxed}) (I# col) = branchCompType ty
   (IO $ \s -> case readSmallArray# boxed col s of (# s1, arr #) -> (# s1, ColumnBoxed (unsafeCoerce# arr) #))
   (IO $ \s -> case readSmallArray# unboxed col s of (# s1, arr #) -> (# s1, ColumnFlat arr #))
-{-# INLINE getColumn #-}
+  (error "Tried to get a column for a tag")
 
 grow :: Columns# -> State# RealWorld -> State# RealWorld
 grow (Columns# _ eids boxed (ColumnSizes# szs) unboxed) s = case copyUnboxed 0# (copyBoxed 0# s) of
@@ -354,7 +413,6 @@ setEdge (Archetype{edges}) compId edge = readIORef edges >>= \em -> HTB.insert e
 
 getColumnSizes :: Archetype -> ColumnSizes#
 getColumnSizes Archetype{columns = Columns# _ _ _ szs _} = szs
-{-# INLINE getColumnSizes #-}
 
 -- It is assumed that the archetype does not already have the component
 createArchetype :: ArchetypeTy -> ColumnSizes# -> IO Archetype

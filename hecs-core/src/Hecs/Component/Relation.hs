@@ -6,13 +6,13 @@ module Hecs.Component.Relation (
   Rel(..)
 , mkRelation
 , CaseTag
+, BranchRel(..)
+, unwrapRelation
 ) where
-
-import Data.Bits
 
 import Hecs.Component.Internal
 import Hecs.Entity.Internal
-import Hecs.Filter.Internal (Tag)
+import {-# SOURCE #-} Hecs.Filter.Internal (Tag)
 import Data.Proxy
 import Foreign.Storable
 import Data.Void
@@ -133,6 +133,7 @@ instance
      ( Switch (CaseTag l True False) (CaseTag r True False)
         (Component l, CaseTag l (CaseTag r (ComponentKind r) (ComponentKind r)) (ComponentKind l) ~ ComponentKind l, CaseStorable (ComponentKind l) (StorableCtx l r))
         (Component r, CaseTag l (CaseTag r (ComponentKind r) (ComponentKind r)) (ComponentKind l) ~ ComponentKind r, CaseStorable (ComponentKind r) (StorableCtx l r))
+     , KnownComponentType (ComponentKind (Rel l r))
      )
   => Component (Rel l r)
   where
@@ -146,6 +147,28 @@ instance
     {-# INLINE backing #-}
 
 mkRelation :: ComponentId l -> ComponentId r -> ComponentId (Rel l r)
-mkRelation (ComponentId (EntityId (unwrap -> l))) (ComponentId (EntityId (unwrap -> r))) = ComponentId (EntityId $ Bitfield combined)
+mkRelation (ComponentId (EntityId (unwrap -> l))) (ComponentId (EntityId (unwrap -> r))) = ComponentId (EntityId $ coerce combined)
   where
-    combined = l `unsafeShiftL` 32 .|. r
+    combined :: Bitfield Int Relation
+    combined = pack $ Relation (fromIntegral l) (fromIntegral r) . pack $ EntityTag True
+{-# INLINE mkRelation #-}
+
+unwrapRelation :: ComponentId (Rel l r) -> (ComponentId l, ComponentId r)
+unwrapRelation (ComponentId (EntityId (coerce @_ @(Bitfield Int Relation) -> b))) = (mk . fromIntegral $ get @"first" b, mk . fromIntegral $ get @"second" b)
+  where mk = ComponentId . EntityId . Bitfield
+{-# INLINE unwrapRelation #-}
+
+class BranchRel (c :: k) where
+  branchRel :: Proxy c
+    -> r -- c is Rel l r
+    -> r -- c is none of the above
+    -> r
+
+instance {-# OVERLAPS #-} BranchRel (Rel l r) where
+  branchRel _ a _ = a
+  {-# INLINE branchRel #-}
+
+
+instance {-# OVERLAPPABLE #-} BranchRel c where
+  branchRel _ _ a = a
+  {-# INLINE branchRel #-}

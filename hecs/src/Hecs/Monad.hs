@@ -36,12 +36,10 @@ instance (MonadBaseControl IO m, Core.WorldClass w) => MonadHecs w (HecsM w m) w
   {-# INLINE freeEntity #-}
   addTagWithId eid compId = HecsM ask >>= \w -> Core.addTagWithId w eid compId
   {-# INLINE addTagWithId #-}
-  addComponentWithId eid compId = HecsM ask >>= \w -> Core.addComponentWithId w eid compId
-  {-# INLINE addComponentWithId #-}
-  setComponentWithId eid compId comp = HecsM $ ask >>= \w -> liftBase $ Core.setComponentWithId w eid compId comp
-  {-# INLINE setComponentWithId #-}
-  getComponentWithId eid compId s f = HecsM ask >>= \w -> Core.getComponentWithId w eid compId s f
-  {-# INLINE getComponentWithId #-}
+  setWithId eid compId comp = HecsM $ ask >>= \w -> liftBase $ Core.setWithId w eid compId comp
+  {-# INLINE setWithId #-}
+  getWithId eid compId s f = HecsM ask >>= \w -> Core.getWithId w eid compId s f
+  {-# INLINE getWithId #-}
   hasTagWithId eid compId = HecsM ask >>= \w -> Core.hasTagWithId w eid compId
   {-# INLINE hasTagWithId #-}
   removeTagWithId eid compId = HecsM ask >>= \w -> Core.removeTagWithId w eid compId
