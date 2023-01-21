@@ -3,6 +3,7 @@
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE UnboxedTuples #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 module Hecs.Component.Internal (
   ComponentId(..)
 , Component(..)
@@ -11,6 +12,7 @@ module Hecs.Component.Internal (
 , ViaBox(..)
 , ViaFlat(..)
 , AccessColumn(..)
+, IsComponent(..)
 ) where
 
 import Hecs.Entity.Internal
@@ -23,9 +25,15 @@ import Data.Int
 import Data.Word
 import GHC.IO (IO(IO))
 import Control.Monad.Base
+import Data.Typeable
 
 newtype ComponentId (c :: k) = ComponentId EntityId
   deriving newtype (Eq, Show, HashKey)
+
+-- This is added to every instance of Component that is registered with TH
+data IsComponent where
+  IsComponent :: forall c . (Typeable c, Component c) => IsComponent
+  deriving Component via ViaBox IsComponent
 
 data ComponentType = Boxed | Flat
 

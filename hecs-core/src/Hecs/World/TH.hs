@@ -6,6 +6,7 @@ module Hecs.World.TH (
 
 import Language.Haskell.TH
 
+import qualified Hecs.World
 import Hecs.World.Internal
 import Hecs.Component.Internal
 import Hecs.Component.Relation
@@ -18,9 +19,11 @@ import Data.Coerce
 import Data.Bitfield
 
 makeWorld :: String -> [Name] -> Q [Dec]
-makeWorld wN names = do
+makeWorld wN names' = do
   let wName = mkName wN
       worldImplName = mkName "WorldImpl"
+      names = [''IsComponent] <> names'
+      preAllocComps = fromIntegral $ length names
       wldDec = NewtypeD [] wName [] Nothing (NormalC wName [(Bang NoSourceUnpackedness NoSourceStrictness, AppT (ConT worldImplName) (LitT $ NumTyLit preAllocComps))]) []
       wCon = pure $ ConT wName
       natTy = pure . LitT $ NumTyLit preAllocComps
@@ -42,13 +45,15 @@ makeWorld wN names = do
           TyConI{} -> do
             xs <- mkHasInstance eid name
             ys <- reifyInstances (mkName "Component") [ConT name] >>= \case
-              [] -> [d| type instance CaseTag $(conT name) a _ = a |]
+              [] -> [d|
+                  type instance CaseTag $(conT name) a _ = a
+                |]
               _ -> let cCon = conT name in [d|
                   type instance CaseTag $cCon _ b = b
-                  
-                  {-# SPECIALISE syncSetComponent :: WorldImpl $natTy -> EntityId -> ComponentId $cCon -> $cCon -> IO () #-}
-                  {-# SPECIALISE syncAddComponent :: WorldImpl $natTy -> EntityId -> ComponentId $cCon -> IO () #-}
-                  {-# SPECIALISE syncRemoveComponent :: WorldImpl $natTy -> EntityId -> ComponentId $cCon -> IO () #-}
+
+                  {-# SPECIALISE syncSetComponent    :: WorldImpl $natTy -> EntityId -> ComponentId $cCon -> $cCon -> IO () #-}
+                  {-# SPECIALISE syncAddComponent    :: WorldImpl $natTy -> EntityId -> ComponentId $cCon ->          IO () #-}
+                  {-# SPECIALISE syncRemoveComponent :: WorldImpl $natTy -> EntityId -> ComponentId $cCon ->          IO () #-}
                 |]
             pure $ xs ++ ys
           _ -> error "TODO"
@@ -62,6 +67,20 @@ makeWorld wN names = do
       instance Has $wCon x => Has $wCon (Tag (x :: k)) where
         getComponentId _ = coerce $ getComponentId @_ @_ @x (Proxy @($wCon))
         {-# INLINE getComponentId #-}
+    |]
+  newWorldD <- [d|
+      newWorld :: MonadBase IO m => m $wCon
+      newWorld = do
+        w <- $(conE wName) <$> liftBase Hecs.World.Internal.new
+        $(foldr (\(i :: Int, n) acc -> do
+          reify n >>= \case
+            DataConI{} -> [| pure () |]
+            TyConI{} -> reifyInstances (mkName "Component") [ConT n] >>= \case
+              [] -> acc
+              _ -> [| $(acc) >> Hecs.World.setComponent w (EntityId (Bitfield i)) (IsComponent @($(conT n))) |]
+            _ -> error "TODO"
+          ) [| pure () |] $ zip [1..] names)
+        pure w
     |]
   specializedApi <- [d|
       getComponentId :: Has $wCon c => ComponentId c
@@ -80,6 +99,4 @@ makeWorld wN names = do
       getColumn ty = Hecs.Filter.getColumn @c @($wCon) @ty @m ty
       {-# INLINE getColumn #-}
     |]
-  pure $ wldDec : compInstances ++ otherInstances ++ specializedApi
-  where
-    preAllocComps = fromIntegral $ length names
+  pure $ wldDec : compInstances ++ otherInstances ++ specializedApi ++ newWorldD

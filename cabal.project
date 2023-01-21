@@ -1,6 +1,6 @@
 source-repository-package
   type: git
   location: git@github.com:1Jajen1/bitfield.git
-  tag: cd735048fdfc65bf67359f78afd92e77b4cab10d
+  tag: 1678cee3035e0e9aedb264f6dbd8b34354e329c7
 
 packages: */*.cabal

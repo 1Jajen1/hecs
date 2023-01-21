@@ -3,7 +3,6 @@ module Hecs (
   makeWorld
 , WorldClass
 , WorldImpl
-, newWorld
 , runHecsM
 , HecsM
 , module Hecs.Component
@@ -21,5 +20,4 @@ import Hecs.Entity.Internal
 import Hecs.Component
 import Hecs.World.TH
 import Hecs.World.Internal
-import Hecs.World
 import Hecs.Filter hiding (filterDSL, getColumn, component)

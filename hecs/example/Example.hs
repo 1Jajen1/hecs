@@ -2,6 +2,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# OPTIONS_GHC -ddump-splices #-}
 module Main where
 
 import Data.Int
@@ -40,7 +41,7 @@ makeWorld "World" [
 
 main :: IO ()
 main = do
-  w <- newWorld @World
+  w <- newWorld
   void . runHecsM w $ do
     eid <- newEntity
     defer $ do

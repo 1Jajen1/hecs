@@ -1,14 +1,12 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 module Hecs.World (
-  newWorld
-, Has
+  Has
 , allocateEntity
 , deAllocateEntity
-, getComponent, getComponentWithId
+, get, getWithId
 , hasTag, hasTagWithId
 , addTag, addTagWithId
-, addComponent, addComponentWithId
-, setComponent, setComponentWithId
+, set, setWithId
 , removeTag, removeTagWithId
 , removeComponent, removeComponentWithId
 , WorldClass
@@ -30,18 +28,15 @@ import Data.Proxy
 import Control.Monad.Base
 import Control.Monad.Trans.Control
 
-newWorld :: (WorldClass w, MonadBase IO m) => m w
-newWorld = liftBase new
+get :: forall c w r m . (WorldClass w, Component c, Has w c, MonadBaseControl IO m) => w -> EntityId -> (c -> m r) -> m r -> m r
+get w eid = getWithId w eid (getComponentId @_ @_ @c (Proxy @w))
+{-# INLINE get #-}
 
-getComponent :: forall c w r m . (WorldClass w, Component c, Has w c, MonadBaseControl IO m) => w -> EntityId -> (c -> m r) -> m r -> m r
-getComponent w eid = getComponentWithId w eid (getComponentId @_ @_ @c (Proxy @w))
-{-# INLINE getComponent #-}
-
-getComponentWithId :: forall c w r m . (WorldClass w, Component c, MonadBaseControl IO m) => w -> EntityId -> ComponentId c -> (c -> m r) -> m r -> m r
-getComponentWithId w eid cid s f = do
-  st <- liftBaseWith $ \runInBase -> getComponentI w eid cid (runInBase . s) (runInBase f)
+getWithId :: forall c w r m . (WorldClass w, Component c, MonadBaseControl IO m) => w -> EntityId -> ComponentId c -> (c -> m r) -> m r -> m r
+getWithId w eid cid s f = do
+  st <- liftBaseWith $ \runInBase -> getI w eid cid (runInBase . s) (runInBase f)
   restoreM st 
-{-# INLINE getComponentWithId #-}
+{-# INLINE getWithId #-}
 
 hasTag :: forall c w m . (WorldClass w, Has w c, MonadBase IO m) => w -> EntityId -> m Bool
 hasTag w eid = hasTagWithId w eid (getComponentId @_ @_ @c (Proxy @w))
@@ -59,21 +54,13 @@ addTagWithId :: forall c w m . (WorldClass w, MonadBase IO m) => w -> EntityId -
 addTagWithId w eid compId = liftBase $ addTagI w eid compId
 {-# INLINE addTagWithId #-}
 
-addComponent :: forall c w m . (WorldClass w, Component c, Has w c, MonadBase IO m) => w -> EntityId -> m ()
-addComponent w eid = addComponentWithId w eid (getComponentId @_ @_ @c (Proxy @w))
-{-# INLINE addComponent #-}
+set :: forall c w m . (WorldClass w, Component c, Has w c, MonadBase IO m) => w -> EntityId -> c -> m ()
+set w eid = setWithId w eid (getComponentId @_ @_ @c (Proxy @w))
+{-# INLINE set #-}
 
-addComponentWithId :: forall c w m . (WorldClass w, Component c, MonadBase IO m) => w -> EntityId -> ComponentId c -> m ()
-addComponentWithId w eid cid = liftBase $ addComponentI w eid cid
-{-# INLINE addComponentWithId #-}
-
-setComponent :: forall c w m . (WorldClass w, Component c, Has w c, MonadBase IO m) => w -> EntityId -> c -> m ()
-setComponent w eid = setComponentWithId w eid (getComponentId @_ @_ @c (Proxy @w))
-{-# INLINE setComponent #-}
-
-setComponentWithId :: forall c w m . (WorldClass w, Component c, MonadBase IO m) => w -> EntityId -> ComponentId c -> c -> m ()
-setComponentWithId w eid cid c = liftBase $ setComponentI w eid cid c
-{-# INLINE setComponentWithId #-}
+setWithId :: forall c w m . (WorldClass w, Component c, MonadBase IO m) => w -> EntityId -> ComponentId c -> c -> m ()
+setWithId w eid cid c = liftBase $ setI w eid cid c
+{-# INLINE setWithId #-}
 
 removeTag :: forall c w m . (WorldClass w, Has w c, MonadBase IO m) => w -> EntityId -> m ()
 removeTag w eid = removeTagWithId w eid (getComponentId @_ @_ @c (Proxy @w)) 

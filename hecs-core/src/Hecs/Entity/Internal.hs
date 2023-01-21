@@ -1,5 +1,7 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Hecs.Entity.Internal (
   EntityId(..)
 , FreshEntityId(..)
@@ -123,8 +125,8 @@ data FreshEntityId where
 
 newtype EntityId = EntityId { unEntityId :: Bitfield Int Entity }
   deriving stock Show
-  deriving newtype Eq
-  deriving (Storable, HashKey) via Int
+  deriving newtype (Eq, Storable)
+  deriving HashKey via Int
 
 data Entity = Entity {
   eid        :: {-# UNPACK #-} !Word32
@@ -133,6 +135,16 @@ data Entity = Entity {
 , tag        :: {-# UNPACK #-} !(Bitfield Word8 EntityTag)
 }
   deriving stock (Show, Generic)
+
+data Relation = Relation {
+  first  :: {-# UNPACK #-} !Word32
+, second :: {-# UNPACK #-} !Word24
+, tag    :: {-# UNPACK #-} !(Bitfield Word8 EntityTag)    
+}
+  deriving stock Generic
+
+newtype Word24 = Word24 Word
+  deriving (HasFixedBitSize, AsRep r) via ViaIntegral 24 Word
 
 data EntityTag = EntityTag {
   isRelation :: !Bool

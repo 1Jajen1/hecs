@@ -132,20 +132,16 @@ instance KnownNat n => WorldClass (WorldImpl n) where
     then modifyMVar_ deferredOpsRef (`Arr.writeBack` AddTag eid compId) -- TODO Strictness
     else syncAddTag w eid compId
   {-# INLINE addTagI #-}
-  addComponentI w@WorldImpl{..} eid compId = if isDeferred
-    then modifyMVar_ deferredOpsRef (`Arr.writeBack` AddComponent eid compId) -- TODO Strictness
-    else syncAddComponent w eid compId
-  {-# INLINE addComponentI #-}
-  setComponentI w@WorldImpl{..} eid compId comp = if isDeferred
+  setI w@WorldImpl{..} eid compId comp = if isDeferred
     then modifyMVar_ deferredOpsRef (`Arr.writeBack` SetComponent eid compId comp) -- TODO Strictness
     else syncSetComponent w eid compId comp
-  {-# INLINE setComponentI #-}
-  getComponentI :: forall c r . Component c => WorldImpl n -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
-  getComponentI WorldImpl{entityIndexRef} eid compId s f = do
+  {-# INLINE setI #-}
+  getI :: forall c r . Component c => WorldImpl n -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
+  getI WorldImpl{entityIndexRef} eid compId s f = do
     readIORef entityIndexRef >>= (\case
       Just (ArchetypeRecord row aty) -> Archetype.lookupComponent aty compId (Archetype.readComponent (Proxy @c) aty row >=> s) f
       Nothing -> f) . IM.lookup (coerce eid)
-  {-# INLINE getComponentI #-}
+  {-# INLINE getI #-}
   hasTagI :: forall c . WorldImpl n -> EntityId -> ComponentId c -> IO Bool
   hasTagI WorldImpl{entityIndexRef} eid compId = do
     readIORef entityIndexRef >>= (\case
@@ -358,9 +354,8 @@ class WorldClass w where
   allocateEntity :: w -> IO EntityId
   deAllocateEntity :: w -> EntityId -> IO ()
   addTagI :: w -> EntityId -> ComponentId c -> IO ()
-  addComponentI :: Component c => w -> EntityId -> ComponentId c -> IO ()
-  setComponentI :: Component c => w -> EntityId -> ComponentId c -> c -> IO ()
-  getComponentI :: Component c => w -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
+  setI :: Component c => w -> EntityId -> ComponentId c -> c -> IO ()
+  getI :: Component c => w -> EntityId -> ComponentId c -> (c -> IO r) -> IO r -> IO r
   hasTagI :: w -> EntityId -> ComponentId c -> IO Bool
   removeTagI :: w -> EntityId -> ComponentId c -> IO ()
   removeComponentI :: Component c => w -> EntityId -> ComponentId c -> IO ()

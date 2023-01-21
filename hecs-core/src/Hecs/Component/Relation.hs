@@ -148,5 +148,4 @@ instance
 mkRelation :: ComponentId l -> ComponentId r -> ComponentId (Rel l r)
 mkRelation (ComponentId (EntityId (unwrap -> l))) (ComponentId (EntityId (unwrap -> r))) = ComponentId (EntityId $ Bitfield combined)
   where
-
     combined = l `unsafeShiftL` 32 .|. r
