@@ -1,6 +1,7 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Hecs.Monad.Class (
   MonadHecs(..)
 , set
@@ -16,6 +17,9 @@ import qualified Hecs.Component as Core
 import qualified Hecs.World as Core
 import qualified Hecs.World.Has as Core
 import qualified Hecs.Filter as Core
+
+import Control.Monad.Trans (lift)
+import Control.Monad.Trans.Reader
 
 import Data.Proxy
 import Data.Kind
@@ -36,6 +40,31 @@ class Monad m => MonadHecs (w :: Type) (m :: Type -> Type) | m -> w where
   filter :: Core.Filter ty Core.HasMainId -> (Core.TypedArchetype ty -> b -> m b) -> m b -> m b
   defer :: m a -> m a
   sync :: m ()
+
+instance MonadHecs w m => MonadHecs w (ReaderT r m) where
+  newEntity = lift newEntity
+  {-# INLINE newEntity #-}
+  freeEntity = lift . freeEntity
+  {-# INLINE freeEntity #-}
+  addTagWithId eid cid = lift $ addTagWithId eid cid
+  {-# INLINE addTagWithId #-}
+  setWithId eid cid c = lift $ setWithId eid cid c
+  {-# INLINE setWithId #-}
+  getWithId eid cid s f = ReaderT $ \r -> getWithId eid cid (\c -> runReaderT (s c) r) (runReaderT f r)
+  {-# INLINE getWithId #-}
+  hasTagWithId eid cid = lift $ hasTagWithId eid cid
+  {-# INLINE hasTagWithId #-}
+  removeTagWithId eid cid = lift $ removeTagWithId eid cid
+  {-# INLINE removeTagWithId #-}
+  removeComponentWithId eid cid = lift $ removeComponentWithId eid cid
+  {-# INLINE removeComponentWithId #-}
+  filter fi s mb = ReaderT $ \r -> Hecs.Monad.Class.filter fi (\aty b -> runReaderT (s aty b) r) (runReaderT mb r)
+  {-# INLINE filter #-}
+  defer act = ReaderT $ \r -> defer $ runReaderT act r
+  {-# INLINE defer #-}
+  sync = lift sync
+  {-# INLINE sync #-}
+
 
 set :: forall c w m . (MonadHecs w m, Core.BranchRel c, Core.Has w c, Core.Component c) => Core.EntityId -> c -> m ()
 set eid comp = setWithId eid (Core.getComponentId @_ @_ @c (Proxy @w)) (coerce comp)
