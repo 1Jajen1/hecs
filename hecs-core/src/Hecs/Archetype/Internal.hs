@@ -476,7 +476,6 @@ removeEntity' aty lastI row s0 = copyUnboxed 0# (copyBoxed 0# s0)
     numBoxed = sizeofSmallMutableArray# boxed
     numUnboxed = sizeofSmallMutableArray# unboxed
 
--- Assumption: dstAty has exactly one additional component and it is at newColumn index
 moveEntity :: Archetype -> Int -> Int -> Archetype -> IO (Int, EntityId)
 moveEntity srcAty (I# row) (I# skipColumn) dstAty = IO $ \s ->
   case readIntArray# dstSzRef 0# s of
@@ -502,10 +501,9 @@ moveEntity srcAty (I# row) (I# skipColumn) dstAty = IO $ \s ->
 moveEntity' :: Archetype -> Int# -> Int# -> Int# -> Archetype -> Int# -> State# RealWorld -> State# RealWorld
 moveEntity' srcAty srcLast row skipColumn dstAty newRow s0 = copyUnboxed 0# 0# (copyBoxed 0# 0# s0)
   where
-    -- TODO Don't copy around ourselves (row == srcLast) in boxed components because that also leaves gc refs...
     copyBoxed n m s
       | isTrue# (n >=# srcNumBoxed) = s
-      | changedBoxed && isTrue# (m ==# skipColumn) = copyBoxed n (m +# 1#) s
+      | changedBoxed && isTrue# (m ==# skipColumn) = if isAdd then copyBoxed n (m +# 1#) s else copyBoxed (n +# 1#) m s
       | otherwise =
         case readSmallArray# srcBoxed n s of
           (# s1, srcArr #) -> case readArray# srcArr row s1 of
@@ -520,7 +518,7 @@ moveEntity' srcAty srcLast row skipColumn dstAty newRow s0 = copyUnboxed 0# 0# (
 
     copyUnboxed n m s
       | isTrue# (n >=# srcNumUnboxed) = s
-      | changedUnboxed && isTrue# (m ==# skipColumn) = copyUnboxed n (m +# 1#) s
+      | changedUnboxed && isTrue# (m ==# skipColumn) = if isAdd then copyUnboxed n (m +# 1#) s else copyUnboxed (n +# 1#) m s
       | otherwise =
         case readSmallArray# srcUnboxed n s of
           (# s1, srcArr #) -> case readSmallArray# dstUnboxed m s1 of
@@ -540,6 +538,8 @@ moveEntity' srcAty srcLast row skipColumn dstAty newRow s0 = copyUnboxed 0# 0# (
     dstNumUnboxed = sizeofSmallMutableArray# dstUnboxed
     changedBoxed = not $ isTrue# (srcNumBoxed ==# dstNumBoxed)
     changedUnboxed = not $ isTrue# (srcNumUnboxed ==# dstNumUnboxed)
+    -- This works under the assumption that we have only one changed column
+    isAdd = isTrue# (srcNumBoxed ># dstNumBoxed) || isTrue# (srcNumUnboxed ># dstNumUnboxed)
 
 newColumns :: Int# -> Int# -> Int# -> ColumnSizes# -> State# RealWorld -> (# State# RealWorld, Columns# #) 
 newColumns initCap numBoxed numUnboxed (ColumnSizes# szs) s0 =

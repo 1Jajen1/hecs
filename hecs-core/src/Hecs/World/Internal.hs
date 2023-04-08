@@ -30,7 +30,6 @@ import GHC.Exts (Any)
 import Data.IORef
 import Control.Concurrent.MVar
 import Data.Bits
-import Data.Kind
 import Data.Bitfield
 import Hecs.Component.Relation
 import Hecs.Component.Properties (wildcard)
@@ -297,7 +296,7 @@ syncRemove ty WorldImpl{..} eid compId = do
 
             componentIndex <- readIORef componentIndexRef
             !compIndex <- Archetype.iterateComponentIds newTy (\tyId col ind' -> do
-              
+
               -- Relation components are treated slightly different
               ind <- if (coerce @_ @(Bitfield Int EntityId.Entity) tyId).tag.isRelation
                 then do
@@ -313,13 +312,13 @@ syncRemove ty WorldImpl{..} eid compId = do
                           )
                           $ Arr.new 4 >>= (`Arr.writeBack` ArchetypeRecord col 1 dstAty)
                         HTB.insert ind rel arr
-                  
+
                   -- add the wildcard parts to the index: Rel Type x and Rel x Type for both first and second
                   writeWildCard (coerce $ mkRelation wildcard first) ind'
                     >>= writeWildCard (coerce $ mkRelation first wildcard)
                     >>= writeWildCard (coerce $ mkRelation wildcard second)
                     >>= writeWildCard (coerce $ mkRelation second wildcard)
-                
+
                 else pure ind'
 
 
@@ -328,7 +327,7 @@ syncRemove ty WorldImpl{..} eid compId = do
             writeIORef componentIndexRef compIndex
 
             pure dstAty
-    
+
     -- now move the entity and its current data between the two
     (newRow, movedEid) <- Archetype.moveEntity aty row removedColumn dstAty
 
